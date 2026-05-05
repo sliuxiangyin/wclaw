@@ -1,0 +1,51 @@
+{
+  "id": "linux-do-fetch",
+  "displayName": "Linux.do 首页抓取",
+  "version": "1.0.0",
+  "apiVersion": "v3",
+  "kind": "command_plugin",
+  "entry": "dist/runtime.mjs",
+  "description": "通过宿主 MCP（Playwright）打开 https://linux.do/ 并 snapshot，结果截断后供带上下文的 LLM 解读。",
+  "triggerDescription": "在 AI Chat 中通过 /command 调用本插件；需宿主已配置 id 为 playwright 的 MCP 并已 probe。",
+  "examples": [
+    { "input": "/command linux-do-fetch" },
+    { "input": "/command linux-do-fetch fetch" }
+  ],
+  "permissions": [],
+  "mcp": {
+    "allowedServers": ["playwright"]
+  },
+  "capabilities": {
+    "chat": false,
+    "llm": true,
+    "command": true,
+    "commandContextWrite": "result_only",
+    "isolatedContext": false,
+    "mcpAccess": "none",
+    "crossPluginInvoke": "none",
+    "orchestration": "none"
+  },
+  "sessionProvider": {
+    "mode": "single"
+  },
+  "guide": {
+    "welcome": "使用 `/command linux-do-fetch`：宿主会经 Playwright MCP 导航到 Linux.do 并抓取 snapshot（ephemeral_with_context 下再由 LLM 归纳）。",
+    "systemPrompt": "",
+    "suggestions": [{ "prompt": "/command linux-do-fetch", "text": "MCP 打开 linux.do" }]
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "maxBodyChars": {
+        "type": "integer",
+        "title": "合并输出最大字符数",
+        "minimum": 1000,
+        "maximum": 50000,
+        "default": 12000
+      }
+    }
+  },
+  "defaultConfig": {
+    "maxBodyChars": 12000
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "wclaw-weixing-v3",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @wclaw/host-api dev",
+    "dev:web": "pnpm --filter @wclaw/host-console dev",
+    "lint:arch": "node scripts/check-architecture.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0"
+  }
+}

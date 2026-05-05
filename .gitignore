@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+
+# Runtime/cache artifacts
+.playwright-mcp/
+**/.playwright-mcp/
+.cache/
+**/.cache/
+tmp/
+temp/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment / local config
+.env
+.env.*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db

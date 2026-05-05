@@ -1,0 +1,112 @@
+{
+
+  "id": "weixin-bridge",
+
+  "displayName": "微信桥",
+
+  "version": "3.0.0",
+
+  "apiVersion": "v3",
+
+  "kind": "runtime_plugin",
+
+  "entry": "runtime.mjs",
+
+  "description": "微信登录、多账号会话（chat 内 /login）",
+
+  "triggerDescription": "进入 Chat 后发送 /login（模拟多账号会话）",
+
+  "examples": [{ "input": "/login" }],
+
+  "permissions": ["network.read", "network.write", "plugin.invoke", "mcp.call"],
+
+  "capabilities": {
+
+    "chat": true,
+
+    "llm": true,
+
+    "command": true,
+
+    "commandContextWrite": "result_only",
+
+    "isolatedContext": true,
+
+    "mcpAccess": "policy_granted",
+
+    "crossPluginInvoke": "policy_granted",
+
+    "orchestration": "runtime_lease"
+
+  },
+
+  "isolation": {
+
+    "exitCommands": ["/close"],
+
+    "idleTimeoutSec": 900,
+
+    "maxTurns": 60
+
+  },
+
+  "mcp": {
+    "allowedServers": []
+  },
+
+  "sessionProvider": {
+    "mode": "multi"
+  },
+
+  "guide": {
+    "welcome": "欢迎使用微信桥。",
+    "suggestions": [{ "prompt": "/help", "text": "/help" }],
+    "multiSession": {
+      "defaultSessionWelcome": "当前是默认引导会话，请先发送 /login 完成扫码登录。\n可用 /accounts 查看账号列表。",
+      "sessionWelcome": "已进入微信账号会话。\n可直接发送聊天内容，或使用 /send、/sync、/logout 等命令。",
+      "defaultSessionSuggestions": [
+        { "prompt": "/help", "text": "/help" },
+        { "prompt": "/login", "text": "/login" },
+        { "prompt": "/accounts", "text": "/accounts" }
+      ],
+      "sessionSuggestions": [
+        { "prompt": "/send 张三 你好", "text": "/send 张三 你好" },
+        { "prompt": "/logout", "text": "/logout" }
+      ]
+    }
+  },
+
+  "configSchema": {
+
+    "type": "object",
+    "properties": {
+      "autoReply": { "type": "boolean", "title": "自动回复" },
+      "pollIntervalMs": { "type": "number", "minimum": 500, "maximum": 30000 },
+      "pollTimeoutMs": { "type": "number", "minimum": 1000, "maximum": 20000 },
+      "maxPollAccountsPerTick": { "type": "number", "minimum": 1, "maximum": 20 },
+      "loginWaitTimeoutMs": { "type": "number", "minimum": 10000, "maximum": 900000 },
+      "startupProbeEnabled": { "type": "boolean", "title": "启动探活发送" },
+      "startupProbeTo": { "type": "string", "title": "启动探活接收方 userId" },
+      "startupProbeText": { "type": "string", "title": "启动探活文本" }
+    },
+    "required": ["pollIntervalMs"]
+
+  },
+
+  "defaultConfig": {
+
+    "autoReply": false,
+
+    "pollIntervalMs": 3000,
+    "pollTimeoutMs": 5000,
+    "maxPollAccountsPerTick": 5,
+    "loginWaitTimeoutMs": 480000,
+    "startupProbeEnabled": false,
+    "startupProbeTo": "",
+    "startupProbeText": "[weixin-bridge] startup probe"
+
+  }
+
+}
+
+

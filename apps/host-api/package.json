@@ -1,0 +1,25 @@
+{
+  "name": "@wclaw/host-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @wclaw/plugin-sdk build && tsx watch src/server.ts",
+    "build": "pnpm --filter @wclaw/plugin-sdk build && tsc -p tsconfig.json",
+    "test:llm-provider": "tsx --test src/providers/llm-runtime-provider/llm-runtime-config.util.test.ts",
+    "test:plugin-loading": "tsx --test src/providers/plugin-runtime-provider/plugin-loading.test.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.55",
+    "@fastify/cors": "^11.2.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@wclaw/plugin-sdk": "workspace:*",
+    "ai": "^6.0.172",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

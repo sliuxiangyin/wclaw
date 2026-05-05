@@ -1,0 +1,22 @@
+{
+  "name": "@wclaw/plugin-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "宿主加载的 runtime_plugin / command_plugin 与宿主之间的类型契约（无宿主实现依赖）。",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
