@@ -14,7 +14,7 @@
 - **编排租约（内存版）**：`POST /api/orchestration/lease/grant`、`POST /api/orchestration/lease/revoke`（已注册路由）
 - 插件运行时扩展：入口 **`export default class`**；启动时 **`createPluginRuntimeProvider`** 预加载 **`Map<pluginId, instance>`**，构造注入 **`{ pluginId, publish }`**（`publish` 为 Hub 窄接口）；Chat / Scheduler / AI 编排经 **`PluginRuntimePort`** 取实例并调 **`executeTurn` / `getScheduledTasks` / `runScheduledTask`** 等（类型见 **`@wclaw/plugin-sdk`**）；**`services` 禁止值导入 `providers`**
 - 宿主前端管理台（`host-console`）：插件 Grid（状态/模式）、配置表单、多会话 Chat、LLM 设置；Chat 与欢迎文案按 **`kind` + `sessionProvider`** 协议驱动，**禁止** `pluginId` 特判（`lint:arch`）
-- **`weixin-bridge`**（当前仓库**唯一**插件）：`runtime_extension`，**`runtime.mjs` 为 `export default class`**；内嵌 `openclaw-weixin`（需在其子目录 `npm run build` 生成 `dist`）；真实扫码登录；`/login` 在同一次 SSE 内 `await waitQr`，进度经 **`emitPluginActivity`**；跨会话欢迎语经 **`handleChat` 返回 `persist`** 由宿主统一落库；收件拉取由调度任务 **`poll-inbox`** 单次执行；默认会话仅登录引导，账号会话走正常收发
+- 现有插件（`plugins/`）：`weixin-bridge`（`runtime_extension`）与 `linux-do-fetch`（`command_plugin`）。其中 `weixin-bridge`：`runtime.mjs` 为 `export default class`；内嵌 `openclaw-weixin`（需在其子目录 `npm run build` 生成 `dist`）；真实扫码登录；`/login` 在同一次 SSE 内 `await waitQr`，进度经 **`emitPluginActivity`**；跨会话欢迎语经 **`handleChat` 返回 `persist`** 由宿主统一落库；收件拉取由调度任务 **`poll-inbox`** 单次执行；默认会话仅登录引导，账号会话走正常收发
 
 项目仍处于早期活跃开发阶段，部分蓝图中的能力（如 **MCP Gateway**、**Chat SSE**、统一可观测性、调度 **`safe_mode` 全链路**）尚未完整落地。
 
@@ -182,7 +182,7 @@ routes → controllers → services → repositories
 ### 6.1 插件发现与加载
 
 1. `host-api` 启动时扫描 `plugins/` 下的子目录。
-2. 读取每个目录中的 `plugin.json`，按 `plugin_spec_v3_插件规范.md` 进行 JSON Schema + 语义校验。
+2. 读取每个目录中的 `plugin.json`，按 `docs/项目功能/插件插件配置.md` 与宿主校验逻辑进行 JSON Schema + 语义校验。
 3. 启动时在组合根对 **`plugin.json` → `entry`** 执行 **`import()` + `new DefaultClass({ pluginId, publish })`**（失败插件跳过并打日志）；**`runtime_extension`** 入口须 **`export default class`**，宿主对实例调用 **`executeTurn` / `decorateSessions` / `getScheduledTasks` / `runScheduledTask` / `clearSession` / `executeCompleted`** 等可选方法（与 **`@wclaw/plugin-sdk` 的 `PluginRuntimeExtension`** 对齐）。
 4. 实例方法语义（与旧命名导出等价）：
    - **`handleChat(ctx)`** —— 处理聊天消息；可返回 **`string` 或 `{ reply, persist? }`**；流式进度用 **`emitPluginActivity` / `emitAssistantDelta`**；**`ctx` 不含 `pluginId` / `publish`**
@@ -208,6 +208,7 @@ routes → controllers → services → repositories
 | 插件 | 类型 | 状态 |
 |------|------|------|
 | `weixin-bridge` | `runtime_extension` | 可用：`export default class` 入口、`runtime.mjs`；内嵌 openclaw-weixin、扫码登录、多账号会话、Scheduler `poll-inbox`；状态目录见子项目 `resolveStateDir()`（**不**改 `openclaw-weixin/` 以满足宿主契约） |
+| `linux-do-fetch` | `command_plugin` | 可用：入口 `dist/runtime.mjs`；通过宿主编排调用 Playwright 能力抓取 `linux.do` 页面快照并回传摘要文本 |
 
 ---
 
@@ -256,11 +257,11 @@ routes → controllers → services → repositories
 
 | 文档 | 内容 |
 |------|------|
-| `v3_项目蓝图_blueprint.md` | 整体架构、技术栈、DoD、MCP Gateway 设计 |
-| `plugin_spec_v3_插件规范.md` | 插件 `plugin.json` 的完整 Schema 与校验规则 |
-| `docs/插件/插件运行时导出方法.md` | **runtime_extension**：`export default class` + 启动预加载 + `PluginRuntimePort` 契约说明 |
-| `ARCH_RULES.md` | 可执行的架构硬性规则与 `lint:arch` 说明 |
-| `frontend_app_plan_前端方案.md` | 前端页面设计、组件选型、API 列表 |
+| `docs/项目蓝图.md` | 整体架构、技术栈、DoD、MCP Gateway 设计 |
+| `docs/项目功能/插件插件配置.md` | 插件 `plugin.json` 字段、配置项与运行时映射说明 |
+| `packages/plugin-sdk/src/runtime-contract.ts` | 插件 runtime 关键类型契约（`PluginRuntimeExtension` 等） |
+| `scripts/check-architecture.mjs` | 可执行的架构硬性规则与 `lint:arch` 说明 |
+| `docs/前端方案.md` | 前端页面设计、组件选型、API 列表 |
 | `docs/weixin_bridge_api_contract_微信桥接口契约.md` | 微信桥与通用插件 API 映射；`userText` / `metadata.wxReplyTo` / 通知预览口径 |
 | `docs/进度/外部进线-ingest检查清单.md` | `ingestExternalUserTurn`、`reflowChatToChannel`、前端 `chat.session.updated` 联动验收 |
 | `DIRECTORY_STRUCTURE.md` / `目录架构.md` | 前后端目录结构与初始化顺序 |
@@ -268,7 +269,7 @@ routes → controllers → services → repositories
 | `docs/host-api_Class与显式依赖注入_需求.md` | host-api：**class + 显式传参** 团队约定（§6）、与 Hub/Notification 装配相关需求 |
 | `packages/plugin-sdk/README.md` | **`@wclaw/plugin-sdk`**：插件与宿主 runtime 类型契约；**勿**为对齐契约修改 `openclaw-weixin` 子树 |
 | `docs/进度/任务TODO.md`、`docs/进度/功能清单_status.md` | 可执行进度与能力对照 |
-| `implementation_roadmap_实施路线图.md` | 每周计划与优先级（P0/P1/P2） |
+| `docs/微信桥专项实施计划.md` | 微信桥分阶段任务与推进清单 |
 | `DOCS_INDEX.md` / `文档导航.md` | 文档总索引与维护规则 |
 
 ---

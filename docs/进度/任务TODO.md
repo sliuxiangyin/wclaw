@@ -23,7 +23,7 @@
 - [ ] 建立分层约束（route/controller/service/repository）并在新接口中执行
 
 ### 插件协议与配置
-- [x] 接入 `plugin_spec_v3_插件规范.md` 校验（JSON Schema + 语义规则）
+- [x] 接入插件清单校验（JSON Schema + 语义规则；口径见 `../项目功能/插件插件配置.md`）
 - [x] 插件目录扫描与列表 API（`GET /api/plugins`、`GET /api/plugins/:pluginId`）
 - [x] 实现插件配置 API：
   - [x] `GET /api/plugins/:pluginId/config`
@@ -57,7 +57,7 @@
 - [~] 阶段 3：runtime 稳定性（scheduler 已接管 `poll-inbox`；缓存 TTL、热更新、`safe_mode` 仍待补）
 - [x] 前端：通用会话按钮切换（无微信专用组件；登录说明走 chat 文案）
 - [x] Scheduler 需求与设计方案文档（`../项目功能/Scheduler调度器_需求与设计方案.md`）
-- [x] 插件设计文档（`../项目功能/插件设计_调度协同与接口规范.md`）
+- [x] 插件设计文档（`../项目功能/插件/插件架构设计.md`）
 
 ---
 
@@ -127,7 +127,7 @@
 ## 工程治理（防堆叠）
 
 - [x] 新增 `设计模式与分层规范.md`
-- [x] 新增 `ARCH_RULES.md` + `pnpm lint:arch`
+- [x] 新增架构规则检查脚本 `../../scripts/check-architecture.mjs` + `pnpm lint:arch`
 - [x] 第二批架构规则（行数限制、service 解耦、route 禁止直连 sqlite）
 - [x] 第三批架构规则（controller 行数、service 单向依赖、hooks 禁止 DOM 直操）
 - [ ] PR 检查清单落地到开发流程（提测前必检）
@@ -156,10 +156,7 @@
 - [x] 已新增编排接口：`/api/orchestration/lease/grant`、`/api/orchestration/lease/revoke`
 - [x] 已新增调度状态接口：`/api/orchestration/scheduler/status`
 - [x] 已打通插件运行时扩展：`executeCommand/getScheduledTasks/runScheduledTask`
-- [x] 已完成两个测试插件：
-  - `runtime_plugin`：`plugins/test-runtime-ping`
-  - `command_plugin`：`plugins/test-command-echo`
-- [x] 已补齐 `workspace-echo` 运行时入口：`plugins/workspace-echo/dist/index.js`
+- [x] 当前仓库插件以 `weixin-bridge`、`linux-do-fetch` 为主；历史测试插件记录已归档，不作为现行基线
 - [x] `weixin-bridge` 已完成 openclaw-weixin 内嵌改造：去除 `while` 常驻轮询，改为 scheduler 单次拉取（`poll-inbox`）
 - [x] `weixin-bridge` 已收敛默认会话行为：默认会话仅登录引导，账号会话处理收发与同步
 - [x] 宿主 `orchestrateChat`：`sessionProvider.mode=multi` 且为默认会话时，非斜杠消息不走 LLM，回落 `handleChat`（协议驱动，无 `pluginId` 特判）

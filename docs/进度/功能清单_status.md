@@ -1,6 +1,6 @@
 # 功能清单 status（基于 docs + code）
 
-更新时间：2026-05-03
+更新时间：2026-05-06
 
 本文作为宿主能力与进度的统一主清单，按四大模块维护：
 
@@ -43,10 +43,9 @@
   - ✅ `POST /api/plugins/:pluginId/chat`
   - ✅ `POST /api/plugins/:pluginId/command`
 - ✅ `weixin-bridge`：`plugin.json` + `runtime.mjs`；内嵌 `openclaw-weixin`（构建产物 `dist`）；真实扫码登录链路；`getScheduledTasks` 任务 `poll-inbox` 单次拉取；`/login` 进度经 SSE **`plugin-activity`**；账号会话欢迎语经 **`persist` 由宿主落库**；inbound 经 **`ingestExternalUserTurn`** 进编排（`userText` 仅为对方正文）；编排成功后 **`reflowChatToChannel`** + `metadata.wxReplyTo` 微信回流；契约见 **`../weixin_bridge_api_contract_微信桥接口契约.md`**
-- ✅ `workspace-echo` 已补齐 `dist/index.js`，可作为 command_plugin 运行
-- ✅ 已新增两个测试插件：
-  - ✅ `test-runtime-ping`（runtime_plugin，含调度任务）
-  - ✅ `test-command-echo`（command_plugin，可执行命令）
+- ✅ 当前插件仓已可运行插件：
+  - ✅ `weixin-bridge`（`runtime_extension`）
+  - ✅ `linux-do-fetch`（`command_plugin`，通过宿主编排调用 Playwright 抓取 Linux.do）
 
 ### 未完成
 
