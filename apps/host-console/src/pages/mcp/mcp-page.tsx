@@ -82,7 +82,7 @@ export function McpPage() {
                       variant="ghost"
                       size="icon"
                       title="编辑"
-                      onClick={() => navigate(`/settings/mcp/${item.id}`)}
+                      onClick={() => navigate(`/mcp/${item.id}`)}
                     >
                       <Pencil className="h-4 w-4" />
                     </Button>
@@ -119,7 +119,7 @@ export function McpPage() {
                         <Button size="sm" variant="outline" onClick={() => void probe(item.id)} disabled={!item.enabled}>
                           探测工具
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => navigate(`/settings/mcp/${item.id}`)}>
+                        <Button size="sm" variant="outline" onClick={() => navigate(`/mcp/${item.id}`)}>
                           编辑 JSON
                         </Button>
                         <Button size="sm" variant="destructive" onClick={() => void remove(item.id)}>

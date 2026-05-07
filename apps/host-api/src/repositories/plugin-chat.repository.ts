@@ -4,6 +4,7 @@ type MessageRow = {
   id: number;
   plugin_id: string;
   session_id: string;
+  trace_id: string | null;
   role: string;
   content: string;
   source_type: "runtime" | "plugin";
@@ -18,17 +19,25 @@ type SessionRow = {
   updated_at: string;
 };
 
+export type AppendChatMessageOptions = {
+  traceId?: string | null;
+  sourceType?: "runtime" | "plugin";
+  sourcePluginId?: string | null;
+  llmEligible?: boolean;
+  contextSummary?: string | null;
+};
+
 const insertStmt = db.prepare(`
   INSERT INTO plugin_chat_messages (
-    plugin_id, session_id, role, content, source_type, source_plugin_id, llm_eligible, context_summary, created_at
+    plugin_id, session_id, trace_id, role, content, source_type, source_plugin_id, llm_eligible, context_summary, created_at
   )
   VALUES (
-    @plugin_id, @session_id, @role, @content, @source_type, @source_plugin_id, @llm_eligible, @context_summary, @created_at
+    @plugin_id, @session_id, @trace_id, @role, @content, @source_type, @source_plugin_id, @llm_eligible, @context_summary, @created_at
   )
 `);
 
 const listStmt = db.prepare(`
-  SELECT id, plugin_id, session_id, role, content, source_type, source_plugin_id, llm_eligible, context_summary, created_at
+  SELECT id, plugin_id, session_id, trace_id, role, content, source_type, source_plugin_id, llm_eligible, context_summary, created_at
   FROM plugin_chat_messages
   WHERE plugin_id = ? AND session_id = ?
   ORDER BY id ASC
@@ -44,7 +53,7 @@ const listSessionsStmt = db.prepare(`
 `);
 
 const listTailStmt = db.prepare(`
-  SELECT id, plugin_id, session_id, role, content, source_type, source_plugin_id, llm_eligible, context_summary, created_at
+  SELECT id, plugin_id, session_id, trace_id, role, content, source_type, source_plugin_id, llm_eligible, context_summary, created_at
   FROM plugin_chat_messages
   WHERE plugin_id = ? AND session_id = ?
   ORDER BY id DESC
@@ -56,16 +65,12 @@ export function appendChatMessage(
   sessionId: string,
   role: "user" | "assistant",
   content: string,
-  options?: {
-    sourceType?: "runtime" | "plugin";
-    sourcePluginId?: string | null;
-    llmEligible?: boolean;
-    contextSummary?: string | null;
-  }
+  options?: AppendChatMessageOptions
 ) {
-  insertStmt.run({
+  const r = insertStmt.run({
     plugin_id: pluginId,
     session_id: sessionId,
+    trace_id: options?.traceId ?? null,
     role,
     content,
     source_type: options?.sourceType ?? "runtime",
@@ -74,6 +79,7 @@ export function appendChatMessage(
     context_summary: options?.contextSummary ?? null,
     created_at: new Date().toISOString()
   });
+  return Number(r.lastInsertRowid);
 }
 
 export function listChatMessages(pluginId: string, sessionId: string) {

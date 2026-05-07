@@ -15,7 +15,8 @@ export function orchestrateIsolatedClose(ctx: AiOrchestrationContext): { state: 
     pluginId: state.pluginId,
     sessionId: state.sessionId,
     mode: state.mode,
-    isolatedPluginId: state.isolatedPluginId
+    isolatedPluginId: state.isolatedPluginId,
+    mcpToolForbidden: state.mcpToolForbidden
   });
   appendChatEvent({
     traceId: ctx.traceId,

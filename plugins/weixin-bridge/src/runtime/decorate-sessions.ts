@@ -1,16 +1,16 @@
-import { listAccounts } from "../bridge-adapter.mjs";
-import { toSessionRow } from "@wclaw/plugin-sdk";
+import { toSessionRow, type PluginSessionRow } from "@wclaw/plugin-sdk";
+import { listAccounts } from "../adapters/openclaw-runtime.js";
 
 /**
  * 会话列表唯一来源：
  * - 默认会话
  * - listAccounts() 返回的账号会话
  */
-export async function decorateSessions(pluginId) {
+export async function decorateSessions(pluginId: string): Promise<PluginSessionRow[]> {
   const defaultSessionId = `${pluginId}:default`;
   const accountPrefix = `${pluginId}:account-`;
 
-  const merged = new Map();
+  const merged = new Map<string, PluginSessionRow>();
   merged.set(
     defaultSessionId,
     toSessionRow({
@@ -20,12 +20,7 @@ export async function decorateSessions(pluginId) {
     })
   );
 
-  let accounts = [];
-  try {
-    accounts = await listAccounts();
-  } catch {
-    accounts = [];
-  }
+  let accounts = await listAccounts().catch(() => []);
   for (const acc of accounts) {
     const accountId = String(acc.accountId);
     const sid = `${accountPrefix}${accountId}`;
@@ -47,7 +42,6 @@ export async function decorateSessions(pluginId) {
     return 0;
   });
   const ordered = [...def, ...rest];
- 
   return ordered.map((s) => {
     if (s.sessionId.startsWith(accountPrefix)) {
       const accountId = s.sessionId.slice(accountPrefix.length);

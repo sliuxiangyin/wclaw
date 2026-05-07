@@ -5,6 +5,11 @@ import { ERROR_CODES } from "../core/error-codes.js";
 import { ok } from "../core/response.js";
 import { plugin as catalogPlugin } from "../services/plugin-catalog/plugin-catalog.service.js";
 import {
+  getChatSessionState,
+  saveChatSessionState,
+  type McpToolForbidden
+} from "../repositories/chat-session.repository.js";
+import {
   clearPluginChatMessages,
   getPluginSessions,
   runPluginCommand,
@@ -19,6 +24,44 @@ type SessionMessagesQuery = { limit?: string };
 type ChatBody = { sessionId?: string; message: string };
 type CommandBody = { command: string };
 type SwitchSessionBody = { sessionId: string };
+type McpToolForbiddenBody = McpToolForbidden;
+
+function parseMcpToolForbiddenBody(input: unknown): McpToolForbidden {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new AppError(ERROR_CODES.INVALID_REQUEST, "body must be an object", 400);
+  }
+  const raw = input as { servers?: unknown; tools?: unknown };
+  const servers = Array.isArray(raw.servers) ? raw.servers : [];
+  const serverList = servers.map((item) => {
+    if (typeof item !== "string" || item.trim() === "") {
+      throw new AppError(ERROR_CODES.INVALID_REQUEST, "servers must be string[]", 400);
+    }
+    return item.trim();
+  });
+  const toolsRaw = raw.tools;
+  if (toolsRaw !== undefined && (!toolsRaw || typeof toolsRaw !== "object" || Array.isArray(toolsRaw))) {
+    throw new AppError(ERROR_CODES.INVALID_REQUEST, "tools must be Record<string, string[]>", 400);
+  }
+  const tools: Record<string, string[]> = {};
+  for (const [serverId, value] of Object.entries((toolsRaw ?? {}) as Record<string, unknown>)) {
+    if (typeof serverId !== "string" || serverId.trim() === "") {
+      throw new AppError(ERROR_CODES.INVALID_REQUEST, "tools key must be non-empty serverId", 400);
+    }
+    if (!Array.isArray(value)) {
+      throw new AppError(ERROR_CODES.INVALID_REQUEST, `tools.${serverId} must be string[]`, 400);
+    }
+    tools[serverId.trim()] = value.map((item) => {
+      if (typeof item !== "string" || item.trim() === "") {
+        throw new AppError(ERROR_CODES.INVALID_REQUEST, `tools.${serverId} must be string[]`, 400);
+      }
+      return item.trim();
+    });
+  }
+  return {
+    servers: [...new Set(serverList)],
+    tools
+  };
+}
 
 export async function registerPluginChatRoutes(app: FastifyInstance, pluginRuntime: PluginRuntimePort) {
   app.get<{ Params: Params }>("/api/plugins/:pluginId/sessions", async (request) => {
@@ -54,6 +97,52 @@ export async function registerPluginChatRoutes(app: FastifyInstance, pluginRunti
         limit: limitNum
       });
       return ok(data, request.id);
+    }
+  );
+
+  app.get<{ Params: SessionMessagesParams }>(
+    "/api/plugins/:pluginId/sessions/:sessionId/mcp-tool-forbidden",
+    async (request) => {
+      const plugin = await catalogPlugin(request.params.pluginId);
+      if (!plugin || plugin.status !== "valid" || !plugin.manifest) {
+        throw new AppError(ERROR_CODES.PLUGIN_NOT_FOUND, "plugin not found", 404);
+      }
+      const state = getChatSessionState(request.params.pluginId, request.params.sessionId);
+      return ok(
+        {
+          pluginId: request.params.pluginId,
+          sessionId: request.params.sessionId,
+          mcpToolForbidden: state.mcpToolForbidden
+        },
+        request.id
+      );
+    }
+  );
+
+  app.put<{ Params: SessionMessagesParams; Body: McpToolForbiddenBody }>(
+    "/api/plugins/:pluginId/sessions/:sessionId/mcp-tool-forbidden",
+    async (request) => {
+      const plugin = await catalogPlugin(request.params.pluginId);
+      if (!plugin || plugin.status !== "valid" || !plugin.manifest) {
+        throw new AppError(ERROR_CODES.PLUGIN_NOT_FOUND, "plugin not found", 404);
+      }
+      const next = parseMcpToolForbiddenBody(request.body);
+      const current = getChatSessionState(request.params.pluginId, request.params.sessionId);
+      saveChatSessionState({
+        pluginId: current.pluginId,
+        sessionId: current.sessionId,
+        mode: current.mode,
+        isolatedPluginId: current.isolatedPluginId,
+        mcpToolForbidden: next
+      });
+      return ok(
+        {
+          pluginId: request.params.pluginId,
+          sessionId: request.params.sessionId,
+          mcpToolForbidden: next
+        },
+        request.id
+      );
     }
   );
 

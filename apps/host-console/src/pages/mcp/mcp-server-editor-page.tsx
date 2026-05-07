@@ -12,7 +12,7 @@ export function McpServerEditorPage() {
   async function onSave() {
     const savedId = await save();
     if (savedId) {
-      navigate(`/settings/mcp/${savedId}`, { replace: true });
+      navigate(`/mcp/${savedId}`, { replace: true });
     }
   }
 
@@ -24,7 +24,7 @@ export function McpServerEditorPage() {
           <p className="text-muted-foreground mt-1">修改配置后保存，再回到列表进行探测。</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => navigate("/settings/mcp")}>
+          <Button variant="outline" onClick={() => navigate("/mcp")}>
             返回列表
           </Button>
           <Button onClick={() => void onSave()} disabled={saving || loading || !!jsonError}>

@@ -1,12 +1,11 @@
-import { sendMessage } from "../bridge-adapter.mjs";
-import { accountIdFromSession } from "./session-state.mjs";
+import type { PluginExecuteCompletedInput } from "@wclaw/plugin-sdk";
+import { sendMessage } from "../adapters/openclaw-runtime.js";
+import { accountIdFromSession } from "./session-state.js";
 
 /**
  * 将宿主编排得到的 assistant `reply` 发回当前单聊会话（`/send` 同源 `sendMessage`）。
- * @param {string} pluginId
- * @param {import("@wclaw/plugin-sdk").PluginExecuteCompletedInput} input
  */
-export async function reflowChatToChannel(pluginId, input) {
+export async function reflowChatToChannel(pluginId: string, input: PluginExecuteCompletedInput): Promise<void> {
   const reply = String(input.reply ?? "").trim();
   if (!reply || reply.includes("(empty llm response)")) return;
 
@@ -17,7 +16,6 @@ export async function reflowChatToChannel(pluginId, input) {
       ? String(accountIdRaw)
       : accountIdFromSession(pluginId, input.sessionId);
   const to = md.wxReplyTo != null ? String(md.wxReplyTo).trim() : "";
-
   if (!accountId || !to) return;
 
   try {

@@ -103,14 +103,45 @@ export abstract class BasePluginRuntime {
     };
   }
 
+  /**
+   * 宿主可能在 `plugin-loading`/`PluginRuntimeProvider` 里对已构造的插件实例执行
+   * `Object.assign(extension, { invokeHostMcpTool, ... })`，而构造入参 `deps` 不含这些字段；
+   * 桥接探测与调用须同时读取「实例挂载」与 `deps`，否则会出现误报 MISSING_BRIDGE。
+   */
+  private hostBridgedFns(): Partial<
+    Pick<
+      PluginRuntimeExtensionDeps,
+      | "invokeHostMcpTool"
+      | "releaseHostMcpContext"
+      | "invokeHostLlm"
+      | "ingestExternalUserTurn"
+    >
+  > {
+    return this as unknown as Partial<
+      Pick<
+        PluginRuntimeExtensionDeps,
+        | "invokeHostMcpTool"
+        | "releaseHostMcpContext"
+        | "invokeHostLlm"
+        | "ingestExternalUserTurn"
+      >
+    >;
+  }
+
   protected hasBridge(bridge: RuntimeBridgeName): boolean {
+    const host = this.hostBridgedFns();
     if (bridge === "mcp") {
-      return typeof this.deps.invokeHostMcpTool === "function";
+      return (
+        typeof host.invokeHostMcpTool === "function" || typeof this.deps.invokeHostMcpTool === "function"
+      );
     }
     if (bridge === "llm") {
-      return typeof this.deps.invokeHostLlm === "function";
+      return typeof host.invokeHostLlm === "function" || typeof this.deps.invokeHostLlm === "function";
     }
-    return typeof this.deps.ingestExternalUserTurn === "function";
+    return (
+      typeof host.ingestExternalUserTurn === "function" ||
+      typeof this.deps.ingestExternalUserTurn === "function"
+    );
   }
 
   protected publish(input: PluginHostPublishInput): void {
@@ -142,7 +173,7 @@ export abstract class BasePluginRuntime {
   }
 
   private async callMcp(input: HostMcpInvokeInput): Promise<Extract<HostMcpInvokeResult, { ok: true }>> {
-    const fn = this.deps.invokeHostMcpTool;
+    const fn = this.hostBridgedFns().invokeHostMcpTool ?? this.deps.invokeHostMcpTool;
     if (typeof fn !== "function") {
       throw new PluginBridgeError("mcp", "MISSING_BRIDGE", "invokeHostMcpTool 未注入");
     }
@@ -156,7 +187,7 @@ export abstract class BasePluginRuntime {
   private async destroyMcpContext(
     input: HostMcpReleaseContextInput
   ): Promise<Extract<HostMcpReleaseContextResult, { ok: true }>> {
-    const fn = this.deps.releaseHostMcpContext;
+    const fn = this.hostBridgedFns().releaseHostMcpContext ?? this.deps.releaseHostMcpContext;
     if (typeof fn !== "function") {
       throw new PluginBridgeError("mcp", "MISSING_BRIDGE", "releaseHostMcpContext 未注入");
     }
@@ -168,7 +199,7 @@ export abstract class BasePluginRuntime {
   }
 
   private async callLlm(input: HostLlmInvokeInput): Promise<Extract<HostLlmInvokeResult, { ok: true }>> {
-    const fn = this.deps.invokeHostLlm;
+    const fn = this.hostBridgedFns().invokeHostLlm ?? this.deps.invokeHostLlm;
     if (typeof fn !== "function") {
       throw new PluginBridgeError("llm", "MISSING_BRIDGE", "invokeHostLlm 未注入");
     }
@@ -185,7 +216,7 @@ export abstract class BasePluginRuntime {
   }
 
   private async callIngest(input: ExternalUserTurnInput): Promise<Extract<ExternalUserTurnResult, { ok: true }>> {
-    const fn = this.deps.ingestExternalUserTurn;
+    const fn = this.hostBridgedFns().ingestExternalUserTurn ?? this.deps.ingestExternalUserTurn;
     if (typeof fn !== "function") {
       throw new PluginBridgeError("ingest", "MISSING_BRIDGE", "ingestExternalUserTurn 未注入");
     }

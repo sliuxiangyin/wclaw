@@ -1,21 +1,21 @@
-import { listPluginActivitiesTail } from "../../repositories/plugin-chat-activity.repository.js";
+import { listPluginActivitiesByTraceIds } from "../../repositories/plugin-chat-activity.repository.js";
 import { listChatMessagesTail } from "../../repositories/plugin-chat.repository.js";
 import { assertPluginChatSessionId } from "./plugin-chat-session-guard.js";
 
 export type PluginChatTimelineMessage = {
-  kind: "message";
   id: number;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  traceId: string | null;
   sourceType: "runtime" | "plugin";
   sourcePluginId: string | null;
   llmEligible: boolean;
   contextSummary: string | null;
+  activities: PluginChatTimelineActivity[];
 };
 
 export type PluginChatTimelineActivity = {
-  kind: "plugin_activity";
   id: number;
   traceId: string;
   seq: number;
@@ -24,21 +24,12 @@ export type PluginChatTimelineActivity = {
   createdAt: string;
 };
 
-export type PluginChatTimelineItem = PluginChatTimelineMessage | PluginChatTimelineActivity;
-
 function clampTimelineLimit(limit: number | undefined): number {
   if (limit === undefined || !Number.isFinite(limit)) return 100;
   const n = Math.floor(limit);
   if (n < 1) return 1;
   if (n > 500) return 500;
   return n;
-}
-
-function timelineSort(a: PluginChatTimelineItem, b: PluginChatTimelineItem): number {
-  const t = a.createdAt.localeCompare(b.createdAt);
-  if (t !== 0) return t;
-  if (a.kind !== b.kind) return a.kind === "message" ? -1 : 1;
-  return a.id - b.id;
 }
 
 function parseActivityPayload(json: string): Record<string, unknown> {
@@ -51,42 +42,49 @@ function parseActivityPayload(json: string): Record<string, unknown> {
   return {};
 }
 
-/**
- * 最近窗口：从消息表与活动表各取最多 `pool` 条（按 id 倒序），合并按时间排序后截取末尾 `limit` 条。
- * 不入 LLM；仅供历史 UI。
- */
 export function getPluginChatHistoryTimeline(input: {
   pluginId: string;
   sessionId: string;
   limit?: number;
-}): { pluginId: string; sessionId: string; limit: number; timeline: PluginChatTimelineItem[] } {
+}): {
+  pluginId: string;
+  sessionId: string;
+  limit: number;
+  timeline: PluginChatTimelineMessage[];
+} {
   assertPluginChatSessionId(input.pluginId, input.sessionId);
   const limit = clampTimelineLimit(input.limit);
-  const pool = Math.min(500, Math.max(limit, 80));
-
-  const msgRows = listChatMessagesTail(input.pluginId, input.sessionId, pool);
-  const actRows = listPluginActivitiesTail(input.pluginId, input.sessionId, pool);
-
-  const items: PluginChatTimelineItem[] = [];
+  const msgRows = listChatMessagesTail(input.pluginId, input.sessionId, limit);
+  const timeline: PluginChatTimelineMessage[] = [];
+  const traceIdSet = new Set<string>();
 
   for (const r of msgRows) {
     if (r.role !== "user" && r.role !== "assistant") continue;
-    items.push({
-      kind: "message",
+    const traceId = r.trace_id ?? null;
+    if (r.role === "assistant" && traceId) {
+      traceIdSet.add(traceId);
+    }
+    timeline.push({
       id: r.id,
       role: r.role,
       content: r.content,
       createdAt: r.created_at,
+      traceId,
       sourceType: r.source_type,
       sourcePluginId: r.source_plugin_id,
       llmEligible: r.llm_eligible !== 0,
-      contextSummary: r.context_summary
+      contextSummary: r.context_summary,
+      activities: []
     });
   }
+  timeline.sort((a, b) => a.id - b.id);
 
-  for (const r of actRows) {
-    items.push({
-      kind: "plugin_activity",
+  const traceIds = [...traceIdSet];
+  const activityRows = listPluginActivitiesByTraceIds(input.pluginId, input.sessionId, traceIds);
+  const activitiesByTraceId: Record<string, PluginChatTimelineActivity[]> = {};
+  for (const r of activityRows) {
+    if (!activitiesByTraceId[r.trace_id]) activitiesByTraceId[r.trace_id] = [];
+    activitiesByTraceId[r.trace_id].push({
       id: r.id,
       traceId: r.trace_id,
       seq: r.seq,
@@ -96,8 +94,10 @@ export function getPluginChatHistoryTimeline(input: {
     });
   }
 
-  items.sort(timelineSort);
-  const timeline = items.length <= limit ? items : items.slice(-limit);
+  for (const row of timeline) {
+    if (row.role !== "assistant" || !row.traceId) continue;
+    row.activities = activitiesByTraceId[row.traceId] ?? [];
+  }
 
   return {
     pluginId: input.pluginId,

@@ -29,7 +29,7 @@
     "mode": "single"
   },
   "guide": {
-    "welcome": "使用 `/command linux-do-fetch`：宿主会经 Playwright MCP 导航到 Linux.do 并抓取 snapshot（ephemeral_with_context 下再由 LLM 归纳）。",
+    "welcome": "使用 `/command linux-do-fetch`：经 Playwright MCP 打开 linux.do 的 `*.json` 列表。若在 WSL 下遇到 0 条主题，可检查是否被 Cloudflare 拦：宿主 MCP Playwright 建议不要带 `--headless`（便于有头过一次验证）；WSLg 一般需可用图形环境（如 `DISPLAY=:0`）。勾选配置 `debugListFetch` 可查看页面正文片段。",
     "systemPrompt": "",
     "suggestions": [{ "prompt": "/command linux-do-fetch", "text": "MCP 打开 linux.do" }]
   },
@@ -42,10 +42,16 @@
         "minimum": 1000,
         "maximum": 50000,
         "default": 12000
+      },
+      "debugListFetch": {
+        "type": "boolean",
+        "title": "调试：列表拉取失败时在活动中输出正文前若干字符（便于排查 CF / 非 JSON）",
+        "default": false
       }
     }
   },
   "defaultConfig": {
-    "maxBodyChars": 12000
+    "maxBodyChars": 12000,
+    "debugListFetch": false
   }
 }

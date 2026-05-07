@@ -4,6 +4,7 @@ import { appendChatEvent } from "../../repositories/chat-event.repository.js";
 import { getChatSessionState } from "../../repositories/chat-session.repository.js";
 // 会话消息正文持久化（user / assistant 行）
 import { appendChatMessage } from "../../repositories/plugin-chat.repository.js";
+import type { AppendChatMessageOptions } from "../../repositories/plugin-chat.repository.js";
 import type { PluginRuntimePort } from "../../core/plugin-runtime.port.js";
 // 载入已安装插件条目与清单（校验 chat 宿主是否可用）
 import { plugin, PluginObjectItem } from "../plugin-catalog/plugin-catalog.service.js";
@@ -56,7 +57,10 @@ export class AiChatOrchestrator {
     const shouldPersist = await resolveSessionPersistDecision(this.pluginRuntime, this.pluginId);
 
     if (shouldPersist(sessionId)) {
-      appendChatMessage(this.pluginId, sessionId, "user", userMessage);
+      const writeOptions: AppendChatMessageOptions = { traceId: traceId ?? null };
+      appendChatMessage(this.pluginId, sessionId, "user", userMessage, {
+        ...writeOptions
+      });
     }
 
     appendChatEvent({
@@ -98,11 +102,15 @@ export class AiChatOrchestrator {
     } = branch;
 
     if (shouldPersist(sessionId)) {
-      appendChatMessage(this.pluginId, sessionId, "assistant", reply, {
+      const writeOptions: AppendChatMessageOptions = {
+        traceId: traceId ?? null,
         sourceType,
         sourcePluginId,
         llmEligible,
         contextSummary
+      };
+      appendChatMessage(this.pluginId, sessionId, "assistant", reply, {
+        ...writeOptions
       });
     }
 

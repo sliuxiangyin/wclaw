@@ -1,9 +1,6 @@
 import type { UIMessage } from "ai";
 import type { PluginActivityPayload } from "../../../lib/api/ai-chat.api";
-import type {
-  PluginChatTimelineItem,
-  PluginChatTimelineMessage
-} from "../../../lib/api/plugin-chat.api";
+import type { PluginChatTimelineMessage } from "../../../lib/api/plugin-chat.api";
 
 function assistantUiMessageId(dbRowId: number): string {
   return `hist-asst-${dbRowId}`;
@@ -64,14 +61,11 @@ export function dedupePluginActivitiesForDisplay(
   return out;
 }
 
-export function timelineToUiBootstrap(items: PluginChatTimelineItem[]): TimelineChatBootstrapResult {
+export function timelineToUiBootstrap(
+  messages: PluginChatTimelineMessage[]
+): TimelineChatBootstrapResult {
   const persistedActivitiesByAssistantMessageId: Record<string, PluginActivityPayload[]> = {};
-  const pending: PluginActivityPayload[] = [];
   const out: UIMessage[] = [];
-  /** 同一条 API 时间线里重复的 trace+seq（双写等）只保留一条 */
-  const seenTraceSeq = new Set<string>();
-  /** 同一 trace 内完全相同的 phase+data 只出现一次（避免误挂到两轮 assistant 时重复） */
-  const seenTraceSemantic = new Set<string>();
 
   const bumpAssistantActivities = (assistantUiId: string, extras: PluginActivityPayload[]) => {
     if (extras.length === 0) return;
@@ -88,46 +82,20 @@ export function timelineToUiBootstrap(items: PluginChatTimelineItem[]): Timeline
     persistedActivitiesByAssistantMessageId[assistantUiId] = next;
   };
 
-  const flushPendingToLastAssistant = () => {
-    if (pending.length === 0) return;
-    const copy = pending.map((x) => ({ ...x }));
-    for (let i = out.length - 1; i >= 0; i--) {
-      if (out[i].role !== "assistant") continue;
-      bumpAssistantActivities(out[i].id, copy);
-      pending.length = 0;
-      return;
-    }
-    pending.length = 0;
-  };
-
-  for (const item of items) {
-    if (item.kind === "plugin_activity") {
-      const tKey = `${item.traceId}\0${item.seq}`;
-      if (seenTraceSeq.has(tKey)) continue;
-      seenTraceSeq.add(tKey);
-      const semKey = `${item.traceId}\0${item.phase}\0${JSON.stringify(item.data ?? {})}`;
-      if (seenTraceSemantic.has(semKey)) continue;
-      seenTraceSemantic.add(semKey);
-      pending.push({ phase: item.phase, data: item.data });
-      continue;
-    }
-    const row = item;
+  for (const row of messages) {
     if (row.role === "user") {
-      flushPendingToLastAssistant();
       out.push(timelineMessageToUIMessage(row));
     } else {
-      const acts = pending.map((x) => ({ ...x }));
-      pending.length = 0;
+      const acts = row.activities.map((x) => ({ phase: x.phase, data: x.data }));
       const um = timelineMessageToUIMessage(row);
       bumpAssistantActivities(um.id, acts);
       out.push(um);
     }
   }
-  flushPendingToLastAssistant();
   return { messages: out, persistedActivitiesByAssistantMessageId };
 }
 
 /** @deprecated 请用 timelineToUiBootstrap；保留以便临时兼容 */
-export function timelineToUiMessages(items: PluginChatTimelineItem[]): UIMessage[] {
+export function timelineToUiMessages(items: PluginChatTimelineMessage[]): UIMessage[] {
   return timelineToUiBootstrap(items).messages;
 }

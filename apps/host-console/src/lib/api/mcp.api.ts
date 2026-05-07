@@ -47,6 +47,27 @@ export type McpServerDetailDto = {
   updated_at: string;
 };
 
+export type McpCatalogDto = {
+  servers: Array<{
+    id: string;
+    displayName?: string;
+    enabled: boolean;
+    transport: McpTransport;
+    status: {
+      ok: boolean;
+      lastProbeAt: string | null;
+      errorMessage?: string;
+      toolCount: number;
+    };
+  }>;
+  tools: Array<{
+    toolId: string;
+    serverId: string;
+    name: string;
+    description?: string;
+  }>;
+};
+
 function unwrap<T>(payload: Envelope<T>): T {
   if (!payload.ok || payload.error) {
     throw new Error(payload.error?.message ?? "请求失败");
@@ -87,4 +108,9 @@ export async function probeMcpServer(id: string): Promise<McpServerStatusSnapsho
   );
   const data = unwrap(payload);
   return data.status;
+}
+
+export async function fetchMcpCatalog(): Promise<McpCatalogDto> {
+  const payload = await apiGet<Envelope<McpCatalogDto>>("/api/mcp/catalog");
+  return unwrap(payload);
 }

@@ -16,6 +16,7 @@ export async function generateWithConfiguredLlm(input: {
     const result = await generateText({
       model: runtime.model,
       messages,
+      allowSystemInMessages: true,
       ...(typeof runtime.temperature === "number" ? { temperature: runtime.temperature } : {}),
       ...(typeof runtime.maxTokens === "number" ? { maxTokens: runtime.maxTokens } : {})
     });
@@ -39,6 +40,7 @@ export async function streamWithConfiguredLlm(input: {
     const result = streamText({
       model: runtime.model,
       messages,
+      allowSystemInMessages: true,
       ...(typeof runtime.temperature === "number" ? { temperature: runtime.temperature } : {}),
       ...(typeof runtime.maxTokens === "number" ? { maxTokens: runtime.maxTokens } : {})
     });

@@ -42,6 +42,16 @@ const listTailBySessionStmt = db.prepare(`
   LIMIT ?
 `);
 
+function buildListByTraceIdsSql(traceIdsCount: number): string {
+  const placeholders = new Array(traceIdsCount).fill("?").join(", ");
+  return `
+    SELECT id, plugin_id, session_id, trace_id, seq, phase, payload_json, created_at
+    FROM plugin_chat_activity
+    WHERE plugin_id = ? AND session_id = ? AND trace_id IN (${placeholders})
+    ORDER BY trace_id ASC, seq ASC, id ASC
+  `;
+}
+
 export function appendPluginActivity(input: {
   pluginId: string;
   sessionId: string;
@@ -69,4 +79,15 @@ export function listPluginActivitiesBySession(pluginId: string, sessionId: strin
 /** 按 id 倒序取最近若干条（调用方如需时间正序可自行 reverse） */
 export function listPluginActivitiesTail(pluginId: string, sessionId: string, limit: number): PluginChatActivityRow[] {
   return listTailBySessionStmt.all(pluginId, sessionId, limit) as PluginChatActivityRow[];
+}
+
+export function listPluginActivitiesByTraceIds(
+  pluginId: string,
+  sessionId: string,
+  traceIds: string[]
+): PluginChatActivityRow[] {
+  if (traceIds.length === 0) return [];
+  const sql = buildListByTraceIdsSql(traceIds.length);
+  const stmt = db.prepare(sql);
+  return stmt.all(pluginId, sessionId, ...traceIds) as PluginChatActivityRow[];
 }

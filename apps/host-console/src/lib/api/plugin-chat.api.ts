@@ -41,19 +41,19 @@ type SessionsResponse = {
 };
 
 export type PluginChatTimelineMessage = {
-  kind: "message";
   id: number;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  traceId: string | null;
   sourceType: "runtime" | "plugin";
   sourcePluginId: string | null;
   llmEligible: boolean;
   contextSummary: string | null;
+  activities: PluginChatTimelineActivity[];
 };
 
 export type PluginChatTimelineActivity = {
-  kind: "plugin_activity";
   id: number;
   traceId: string;
   seq: number;
@@ -62,15 +62,13 @@ export type PluginChatTimelineActivity = {
   createdAt: string;
 };
 
-export type PluginChatTimelineItem = PluginChatTimelineMessage | PluginChatTimelineActivity;
-
 type HistoryTimelineResponse = {
   ok: boolean;
   data: {
     pluginId: string;
     sessionId: string;
     limit: number;
-    timeline: PluginChatTimelineItem[];
+    timeline: PluginChatTimelineMessage[];
   };
   error: ApiError;
 };
@@ -137,6 +135,21 @@ type ClearSessionMessagesResponse = {
   error: ApiError;
 };
 
+export type McpToolForbidden = {
+  servers: string[];
+  tools: Record<string, string[]>;
+};
+
+type McpToolForbiddenResponse = {
+  ok: boolean;
+  data: {
+    pluginId: string;
+    sessionId: string;
+    mcpToolForbidden: McpToolForbidden;
+  };
+  error: ApiError;
+};
+
 export async function clearPluginSessionMessages(pluginId: string, sessionId: string) {
   const res = await fetch(
     `${API_BASE_URL}/api/plugins/${pluginId}/sessions/${encodeURIComponent(sessionId)}/messages`,
@@ -147,4 +160,35 @@ export async function clearPluginSessionMessages(pluginId: string, sessionId: st
     throw new Error(payload.error?.message ?? "clear session messages failed");
   }
   return payload.data;
+}
+
+export async function getSessionMcpToolForbidden(pluginId: string, sessionId: string) {
+  const res = await fetch(
+    `${API_BASE_URL}/api/plugins/${pluginId}/sessions/${encodeURIComponent(sessionId)}/mcp-tool-forbidden`
+  );
+  const payload = (await res.json()) as McpToolForbiddenResponse;
+  if (!res.ok || !payload.ok || payload.error) {
+    throw new Error(payload.error?.message ?? "load mcp tool forbidden failed");
+  }
+  return payload.data.mcpToolForbidden;
+}
+
+export async function saveSessionMcpToolForbidden(
+  pluginId: string,
+  sessionId: string,
+  mcpToolForbidden: McpToolForbidden
+) {
+  const res = await fetch(
+    `${API_BASE_URL}/api/plugins/${pluginId}/sessions/${encodeURIComponent(sessionId)}/mcp-tool-forbidden`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(mcpToolForbidden)
+    }
+  );
+  const payload = (await res.json()) as McpToolForbiddenResponse;
+  if (!res.ok || !payload.ok || payload.error) {
+    throw new Error(payload.error?.message ?? "save mcp tool forbidden failed");
+  }
+  return payload.data.mcpToolForbidden;
 }
