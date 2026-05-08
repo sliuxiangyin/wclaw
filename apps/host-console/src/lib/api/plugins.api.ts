@@ -27,13 +27,12 @@ export type PluginListItem = {
     id: string;
     displayName: string;
     kind: "runtime_plugin" | "command_plugin";
+    commandMode?: "ephemeral_no_context" | "ephemeral_with_context" | "isolated_chat";
     version: string;
     description: string;
     entry: string;
-    capabilities: {
-      chat?: boolean;
-      [k: string]: unknown;
-    };
+    systemPrompt?: string;
+    mcp?: { allowedServers?: string[] };
     sessionProvider?: { mode?: string; [k: string]: unknown };
     configSchema?: Record<string, unknown>;
     defaultConfig?: Record<string, unknown>;

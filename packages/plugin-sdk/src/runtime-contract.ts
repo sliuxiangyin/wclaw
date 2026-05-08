@@ -9,6 +9,15 @@ export type PluginSessionRow = {
   sessionId: string;
   updatedAt: string;
   title?: string;
+  ui?: {
+    subtitle?: string;
+    description?: string;
+    badges?: string[];
+    welcome?: string;
+    suggestions?: Array<{ prompt: string; text?: string }>;
+    avatarUrl?: string;
+    coverUrl?: string;
+  };
   /** 会话持久化策略：ephemeral 表示该会话消息默认不落宿主 chat message 表 */
   persistence?: "persist" | "ephemeral";
   /** 仅 runtime_plugin 生效：true 时该会话消息无论是否命令都优先进入 executeTurn。 */

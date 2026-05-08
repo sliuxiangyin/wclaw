@@ -15,6 +15,16 @@ export async function decorateSessions(pluginId: string): Promise<PluginSessionR
     defaultSessionId,
     toSessionRow({
       sessionId: defaultSessionId,
+      title: "默认会话",
+      ui: {
+        subtitle: "登录与引导",
+        badges: ["wechat", "guide"],
+        welcome: "Hello there!\nHow can I help you today?",
+        suggestions: [
+          { prompt: "/login", text: "开始扫码登录" },
+          { prompt: "/help", text: "查看命令帮助" }
+        ]
+      },
       persistence: "ephemeral",
       forceExecuteTurn: true
     })
@@ -28,6 +38,16 @@ export async function decorateSessions(pluginId: string): Promise<PluginSessionR
       sid,
       toSessionRow({
         sessionId: sid,
+        title: `微信账号 ${accountId}`,
+        ui: {
+          subtitle: `账号会话 ${accountId}`,
+          badges: ["wechat", "account"],
+          welcome: `已进入账号会话：${accountId}\n可以直接发送消息，或使用 /help 查看命令。`,
+          suggestions: [
+            { prompt: "/help", text: "查看命令帮助" },
+            { prompt: "帮我查看最近会话摘要", text: "最近会话摘要" }
+          ]
+        },
         persistence: "persist"
       })
     );
@@ -41,15 +61,5 @@ export async function decorateSessions(pluginId: string): Promise<PluginSessionR
     if (a.updatedAt > b.updatedAt) return -1;
     return 0;
   });
-  const ordered = [...def, ...rest];
-  return ordered.map((s) => {
-    if (s.sessionId.startsWith(accountPrefix)) {
-      const accountId = s.sessionId.slice(accountPrefix.length);
-      return { ...s, title: `微信账号 ${accountId}` };
-    }
-    if (s.sessionId === defaultSessionId) {
-      return { ...s, title: "默认会话" };
-    }
-    return { ...s, title: s.title ?? s.sessionId };
-  });
+  return [...def, ...rest];
 }

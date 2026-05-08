@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { getPluginSessions, switchPluginSession } from "../../../lib/api/plugin-chat.api";
+import {
+  getPluginSessions,
+  switchPluginSession,
+  type PluginSessionRowDto
+} from "../../../lib/api/plugin-chat.api";
 
 import type { PluginListItem } from "../../../lib/api/plugins.api";
 
@@ -8,13 +12,13 @@ import type { PluginListItem } from "../../../lib/api/plugins.api";
 
 export function usePluginChat(plugin: PluginListItem) {
 
-  const [sessions, setSessions] = useState<Array<{ sessionId: string; title: string; updatedAt: string }>>([]);
+  const [sessions, setSessions] = useState<PluginSessionRowDto[]>([]);
 
   const [loadingSessions, setLoadingSessions] = useState(true);
 
   const [error, setError] = useState<string | null>(null);
 
-  const [sessionId, setSessionId] = useState<string>(`${plugin.pluginId}:default`);
+  const [sessionId, setSessionId] = useState<string>("");
 
   const storageKey = useMemo(() => `chat:lastSession:${plugin.pluginId}`, [plugin.pluginId]);
 
@@ -32,29 +36,24 @@ export function usePluginChat(plugin: PluginListItem) {
 
       const remembered = localStorage.getItem(storageKey);
 
-      const picked =
-
-        list.find((x) => x.sessionId === remembered)?.sessionId ??
-
-        list[0]?.sessionId ??
-
-        `${plugin.pluginId}:default`;
+      const picked = list.find((x) => x.sessionId === remembered)?.sessionId ?? list[0]?.sessionId ?? "";
 
       setSessions(list);
 
       setSessionId(picked);
 
-      localStorage.setItem(storageKey, picked);
+      if (picked) {
+        localStorage.setItem(storageKey, picked);
+      } else {
+        localStorage.removeItem(storageKey);
+      }
 
     } catch (err) {
 
       setError(err instanceof Error ? err.message : "加载会话失败");
 
-      const fallback = `${plugin.pluginId}:default`;
-
-      setSessions([{ sessionId: fallback, title: "默认会话", updatedAt: new Date().toISOString() }]);
-
-      setSessionId(fallback);
+      setSessions([]);
+      setSessionId("");
 
     } finally {
 
@@ -75,6 +74,7 @@ export function usePluginChat(plugin: PluginListItem) {
 
 
   async function selectSession(nextSessionId: string) {
+    if (!nextSessionId) return;
 
     await switchPluginSession(plugin.pluginId, nextSessionId);
 
@@ -89,6 +89,7 @@ export function usePluginChat(plugin: PluginListItem) {
   return {
 
     sessionId,
+    currentSession: sessions.find((s) => s.sessionId === sessionId) ?? null,
 
     sessions,
 

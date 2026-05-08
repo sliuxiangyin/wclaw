@@ -93,13 +93,15 @@ export class PluginRuntimeProvider implements PluginRuntimePort {
   }
 
   /**
-   * 为声明了 `capabilities.llm === true` 的 `runtime_plugin` / `command_plugin` 挂上 `invokeHostLlm`。
+   * 为允许使用宿主 LLM 的插件挂上 `invokeHostLlm`：
+   * - runtime_plugin: 总是允许
+   * - command_plugin: 除 `ephemeral_no_context` 外允许
    */
   setInvokeHostLlm(factory: CreateInvokeHostLlmFactory): void {
     for (const row of this.pluginLoading.snapshot()) {
       const kind = row.manifest?.kind;
       if (kind !== "runtime_plugin" && kind !== "command_plugin") continue;
-      if (row.manifest?.capabilities?.llm !== true) continue;
+      if (kind === "command_plugin" && row.manifest?.commandMode === "ephemeral_no_context") continue;
       const ext = row.object;
       if (!ext) continue;
       const invokeLlm = factory({ pluginId: row.pluginId, getPluginRuntime: () => this });

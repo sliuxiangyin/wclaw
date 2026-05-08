@@ -12,7 +12,9 @@ export type CreateInvokeHostLlmForPluginOptions = {
 
 /**
  * 宿主 LLM 窄接口：`invokeHostLlm({ messages, model? })`，与控制台 LLM 配置同源；
- * 仅当 `plugin.json` 声明 `capabilities.llm === true` 时注入。
+ * 仅当插件允许宿主 LLM 时注入：
+ * - runtime_plugin: 允许
+ * - command_plugin: commandMode !== ephemeral_no_context
  */
 export function createInvokeHostLlmForPlugin(
   options: CreateInvokeHostLlmForPluginOptions
@@ -27,11 +29,11 @@ export function createInvokeHostLlmForPlugin(
         message: `plugin not found: ${options.pluginId}`
       };
     }
-    if (manifest.capabilities?.llm !== true) {
+    if (manifest.kind === "command_plugin" && manifest.commandMode === "ephemeral_no_context") {
       return {
         ok: false,
         code: ERROR_CODES.INVALID_REQUEST,
-        message: "[llm] 当前插件未声明 capabilities.llm，禁止使用 invokeHostLlm。"
+        message: "[llm] 当前插件 commandMode=ephemeral_no_context，禁止使用 invokeHostLlm。"
       };
     }
 

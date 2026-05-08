@@ -1,8 +1,7 @@
 import {
   appendChatMessage,
   deleteAllChatMessagesForSession,
-  listChatMessages,
-  listPluginSessions
+  listChatMessages
 } from "../../repositories/plugin-chat.repository.js";
 import { getPluginConfig } from "../../repositories/plugin-config.repository.js";
 import type { PluginRuntimeExtension, PluginTurnHandleResult } from "@wclaw/plugin-sdk";
@@ -11,6 +10,7 @@ import type { PluginManifest } from "../plugin-catalog/plugin-catalog.service.js
 import { assertPluginChatSessionId } from "./plugin-chat-session-guard.js";
 import { resolveSessionPersistDecision } from "../ai-chat/session-persistence-policy.service.js";
 import type { PluginChatPersistRow } from "@wclaw/plugin-sdk";
+import type { PluginSessionRow } from "@wclaw/plugin-sdk";
 
 type SendChatInput = {
   pluginRuntime: PluginRuntimePort;
@@ -31,13 +31,13 @@ type SendChatInput = {
 
 export async function callExecuteTurn(input: SendChatInput) {
   const { pluginRuntime, pluginId, sessionId, message, manifest, stream, delegatedPersistence } = input;
-  const shouldPersist = await resolveSessionPersistDecision(pluginRuntime, pluginId);
+  const row = await pluginRuntime.plugin(pluginId);
+  const shouldPersist = await resolveSessionPersistDecision(row);
   if (!delegatedPersistence && shouldPersist(sessionId)) {
     appendChatMessage(pluginId, sessionId, "user", message);
   }
 
   const config = getPluginConfig(pluginId);
-  const row = await pluginRuntime.plugin(pluginId);
   const runtime = row?.object as PluginRuntimeExtension | undefined;
   let reply: string;
   let continueFlow = false;
@@ -167,26 +167,13 @@ export async function clearPluginChatMessages(
 export async function getPluginSessions(
   pluginRuntime: PluginRuntimePort,
   pluginId: string,
-  defaultSessionId: string,
   _manifest: PluginManifest
 ) {
-  const sessions = listPluginSessions(pluginId);
-  const empty = sessions.length === 0;
-  let rows: Array<{ sessionId: string; updatedAt: string; title?: string }> = empty
-    ? [{ sessionId: defaultSessionId, updatedAt: new Date().toISOString() }]
-    : sessions.map((s) => ({ sessionId: s.sessionId, updatedAt: s.updatedAt }));
-
   const row = await pluginRuntime.plugin(pluginId);
   const runtime = row?.object as PluginRuntimeExtension | undefined;
-  if (runtime?.decorateSessions) {
-    rows = await Promise.resolve(runtime.decorateSessions());
-  }
-
-  return rows.map((s) => ({
-    sessionId: s.sessionId,
-    title: s.title ?? (empty && s.sessionId === defaultSessionId ? "默认会话" : s.sessionId),
-    updatedAt: s.updatedAt
-  }));
+  if (!runtime?.decorateSessions) return [];
+  const rows = await Promise.resolve(runtime.decorateSessions());
+  return normalizeSessionRows(rows);
 }
 
 function buildDefaultReply(pluginId: string, message: string): string {
@@ -221,4 +208,9 @@ function normalizePersistRows(pluginId: string, rows:PluginChatPersistRow[] | un
     persist.push({ sessionId: sid, role, content });
   }
   return persist;
+}
+
+function normalizeSessionRows(rows: PluginSessionRow[] | undefined): PluginSessionRow[] {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((s) => Boolean(s?.sessionId) && Boolean(s?.updatedAt));
 }

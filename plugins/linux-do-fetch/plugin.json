@@ -4,34 +4,12 @@
   "version": "1.0.0",
   "apiVersion": "v3",
   "kind": "command_plugin",
+  "commandMode": "ephemeral_with_context",
   "entry": "dist/runtime.mjs",
   "description": "通过宿主 MCP（Playwright）打开 https://linux.do/ 并 snapshot，结果截断后供带上下文的 LLM 解读。",
-  "triggerDescription": "在 AI Chat 中通过 /command 调用本插件；需宿主已配置 id 为 playwright 的 MCP 并已 probe。",
-  "examples": [
-    { "input": "/command linux-do-fetch" },
-    { "input": "/command linux-do-fetch fetch" }
-  ],
-  "permissions": [],
+  "systemPrompt": "你是 Linux.do 技术信息分析助手。优先输出与技术、产品、开源、工程实践相关的信息；避免时政争议、社区灌水和营销导流内容。",
   "mcp": {
     "allowedServers": ["playwright"]
-  },
-  "capabilities": {
-    "chat": false,
-    "llm": true,
-    "command": true,
-    "commandContextWrite": "result_only",
-    "isolatedContext": false,
-    "mcpAccess": "none",
-    "crossPluginInvoke": "none",
-    "orchestration": "none"
-  },
-  "sessionProvider": {
-    "mode": "single"
-  },
-  "guide": {
-    "welcome": "使用 `/command linux-do-fetch`：经 Playwright MCP 打开 linux.do 的 `*.json` 列表。若在 WSL 下遇到 0 条主题，可检查是否被 Cloudflare 拦：宿主 MCP Playwright 建议不要带 `--headless`（便于有头过一次验证）；WSLg 一般需可用图形环境（如 `DISPLAY=:0`）。勾选配置 `debugListFetch` 可查看页面正文片段。",
-    "systemPrompt": "",
-    "suggestions": [{ "prompt": "/command linux-do-fetch", "text": "MCP 打开 linux.do" }]
   },
   "configSchema": {
     "type": "object",

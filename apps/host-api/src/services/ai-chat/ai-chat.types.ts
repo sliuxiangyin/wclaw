@@ -14,6 +14,8 @@ export type UiChatMessage = {
 export type AiChatStreamCallbacks = {
   onStart?: (meta: { sourceType: "runtime" | "plugin"; sourcePluginId: string | null }) => void;
   onTextDelta?: (delta: string) => void;
+  /** 透传 LLM 结构化 chunk（reasoning/tool/source 等）到 SSE */
+  onLlmChunk?: (chunk: Record<string, unknown> & { type: string }) => void;
   /** 插件/MCP 活动进度：仅 SSE，不入 LLM 上下文、不写入 assistant 正文流 */
   onPluginActivity?: (payload: { phase: string; data?: Record<string, unknown> }) => void;
 };
@@ -26,6 +28,7 @@ export type OrchestrateChatInput = {
   messages: UiChatMessage[];
   model?: string;
   traceId?: string | null;
+  abortSignal?: AbortSignal;
   stream?: AiChatStreamCallbacks;
   /** 供 `executeCompleted` 与进线 `metadata` 同源（HTTP Chat 通常不传） */
   reflowMetadata?: Record<string, unknown>;
@@ -64,6 +67,7 @@ export type ExecuteCommandPluginInput = {
   messages: UiChatMessage[];
   model?: string;
   traceId?: string | null;
+  abortSignal?: AbortSignal;
   hostPluginId: string;
   sessionId: string;
   stream?: AiChatStreamCallbacks;
@@ -81,5 +85,6 @@ export type AiOrchestrationContext = {
   messages: UiChatMessage[];
   model?: string;
   traceId?: string | null;
+  abortSignal?: AbortSignal;
   stream?: AiChatStreamCallbacks;
 };

@@ -87,11 +87,7 @@ function validateSchemaShape(spec: unknown): string[] {
     "apiVersion",
     "kind",
     "entry",
-    "description",
-    "triggerDescription",
-    "examples",
-    "permissions",
-    "capabilities"
+    "description"
   ];
 
   for (const key of requiredTop) {
@@ -104,14 +100,17 @@ function validateSchemaShape(spec: unknown): string[] {
   if (!["runtime_plugin", "command_plugin"].includes(String(obj.kind ?? ""))) {
     errors.push("kind 必须是 runtime_plugin 或 command_plugin");
   }
-  if (!Array.isArray(obj.examples) || obj.examples.length === 0) {
+  if (obj.examples !== undefined && (!Array.isArray(obj.examples) || obj.examples.length === 0)) {
     errors.push("examples 必须是非空数组");
   }
-  if (!Array.isArray(obj.permissions)) {
+  if (obj.permissions !== undefined && !Array.isArray(obj.permissions)) {
     errors.push("permissions 必须是数组");
   }
-  if (!obj.capabilities || typeof obj.capabilities !== "object" || Array.isArray(obj.capabilities)) {
-    errors.push("capabilities 必须是 object");
+  if (obj.systemPrompt !== undefined && typeof obj.systemPrompt !== "string") {
+    errors.push("systemPrompt 必须是 string");
+  }
+  if (obj.kind === "command_plugin" && obj.commandMode === undefined) {
+    errors.push("kind=command_plugin 时，commandMode 必填");
   }
 
   return errors;
@@ -119,29 +118,25 @@ function validateSchemaShape(spec: unknown): string[] {
 
 function validateSemantics(spec: Record<string, unknown>): string[] {
   const errors: string[] = [];
-  const capabilities = spec.capabilities as Record<string, unknown> | undefined;
   const mcp = spec.mcp as Record<string, unknown> | undefined;
-  const sessionProvider = spec.sessionProvider as Record<string, unknown> | undefined;
-  const kind = spec.kind;
+  const kind = String(spec.kind ?? "");
+  const commandMode = spec.commandMode;
   const entry = String(spec.entry ?? "");
 
   if (entry.includes("..")) {
     errors.push("entry 不能包含 '..' 路径跳转");
   }
 
-  if (capabilities) {
-    if (capabilities.llm === false && capabilities.commandContextWrite !== "none") {
-      errors.push("capabilities.llm=false 时，commandContextWrite 必须为 none");
+  if (kind === "command_plugin") {
+    if (
+      commandMode !== "ephemeral_no_context" &&
+      commandMode !== "ephemeral_with_context" &&
+      commandMode !== "isolated_chat"
+    ) {
+      errors.push("kind=command_plugin 时，commandMode 必须是有效枚举值");
     }
-    if (kind === "command_plugin" && capabilities.command !== true) {
-      errors.push("kind=command_plugin 时，capabilities.command 必须为 true");
-    }
-    if (capabilities.orchestration === "runtime_lease" && kind !== "runtime_plugin") {
-      errors.push("orchestration=runtime_lease 仅允许 runtime_plugin");
-    }
-    if (capabilities.chat === true && !sessionProvider) {
-      errors.push("capabilities.chat=true 时，sessionProvider 必填");
-    }
+  } else if (commandMode !== undefined) {
+    errors.push("kind=runtime_plugin 时，禁止配置 commandMode");
   }
 
   const allowedServers = (mcp?.allowedServers as string[] | undefined) ?? [];

@@ -1,22 +1,28 @@
-import { generateText, streamText, type ModelMessage } from "ai";
+import { generateText, stepCountIs, streamText, type ModelMessage, type ToolSet, type UIMessageChunk } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { AppError } from "../../core/app-error.js";
 import { ERROR_CODES } from "../../core/error-codes.js";
 import { getLlmConfig } from "../../repositories/llm-config.repository.js";
 
 type LlmInputMessage = { role: "system" | "user" | "assistant"; content: string };
-
 export async function generateWithConfiguredLlm(input: {
   messages: LlmInputMessage[];
   modelOverride?: string;
+  tools?: ToolSet;
+  abortSignal?: AbortSignal;
 }) {
   const runtime = buildLlmRuntime(input.modelOverride);
   const messages = runtime.toModelMessages(input.messages);
+  const hasTools = Boolean(input.tools && Object.keys(input.tools).length > 0);
   try {
     const result = await generateText({
       model: runtime.model,
       messages,
       allowSystemInMessages: true,
+      abortSignal: input.abortSignal,
+      stopWhen: stepCountIs(runtime.maxSteps),
+      ...(hasTools ? { tools: input.tools } : {}),
+      ...(!hasTools ? { toolChoice: "none" as const } : {}),
       ...(typeof runtime.temperature === "number" ? { temperature: runtime.temperature } : {}),
       ...(typeof runtime.maxTokens === "number" ? { maxTokens: runtime.maxTokens } : {})
     });
@@ -32,27 +38,38 @@ export async function streamWithConfiguredLlm(input: {
   messages: LlmInputMessage[];
   modelOverride?: string;
   onTextDelta?: (delta: string) => void;
+  onChunk?: (chunk: Record<string, unknown> & { type: string }) => void;
+  tools?: ToolSet;
+  abortSignal?: AbortSignal;
 }) {
   const runtime = buildLlmRuntime(input.modelOverride);
   const messages = runtime.toModelMessages(input.messages);
-
+  const hasTools = Boolean(input.tools && Object.keys(input.tools).length > 0);
+  console.log("messages", messages);
   try {
     const result = streamText({
       model: runtime.model,
       messages,
       allowSystemInMessages: true,
+      abortSignal: input.abortSignal,
+      stopWhen: stepCountIs(runtime.maxSteps),
+      ...(hasTools ? { tools: input.tools } : {}),
+      ...(!hasTools ? { toolChoice: "none" as const } : {}),
       ...(typeof runtime.temperature === "number" ? { temperature: runtime.temperature } : {}),
       ...(typeof runtime.maxTokens === "number" ? { maxTokens: runtime.maxTokens } : {})
     });
 
     let fullText = "";
-    for await (const delta of result.textStream) {
-      fullText += delta;
-      input.onTextDelta?.(delta);
+    for await (const chunk of result.toUIMessageStream({ sendSources: true })) {
+      const raw = chunk as UIMessageChunk;
+      if (raw.type === "text-delta" && typeof raw.delta === "string" && raw.delta.length > 0) {
+        fullText += raw.delta;
+        input.onTextDelta?.(raw.delta);
+      }
+      input.onChunk?.(chunk as Record<string, unknown> & { type: string });
     }
 
-    const text = fullText.trim();
-    return { text: text.length > 0 ? text : "(empty llm response)" };
+    return { text: fullText.trim() };
   } catch (error) {
     throw new AppError(ERROR_CODES.LLM_UPSTREAM_ERROR, normalizeLlmErrorMessage(error), 502);
   }
@@ -66,6 +83,8 @@ function buildLlmRuntime(modelOverride?: string) {
   const systemPrompt = readOptionalString(cfg, ["systemPrompt", "system"]);
   const temperature = readOptionalNumber(cfg, ["temperature"]);
   const maxTokens = readOptionalNumber(cfg, ["maxTokens", "max_tokens"]);
+  const maxStepsRaw = readOptionalNumber(cfg, ["maxSteps", "max_steps"]);
+  const maxSteps = Number.isFinite(maxStepsRaw) ? Math.max(1, Math.floor(maxStepsRaw!)) : 8;
 
   if (!apiKey) {
     throw new AppError(ERROR_CODES.LLM_API_KEY_MISSING, "LLM apiKey 未配置，请先在 LLM 设置中保存 apiKey。", 400);
@@ -80,6 +99,7 @@ function buildLlmRuntime(modelOverride?: string) {
     model: provider.chat(modelName),
     temperature,
     maxTokens,
+    maxSteps,
     toModelMessages(inputMessages: LlmInputMessage[]): ModelMessage[] {
       const mappedMessages: ModelMessage[] = inputMessages.map((m) => ({
         role: m.role,

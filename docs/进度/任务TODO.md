@@ -21,6 +21,16 @@
 - [x] 统一错误码
 - [x] 健康检查：`GET /health`
 - [ ] 建立分层约束（route/controller/service/repository）并在新接口中执行
+- [ ] AI Chat 主通道重构（标准 UIMessage Stream + 可恢复会话，详见 `../项目功能/宿主/AIChat_UIMessageStream直通与可恢复会话_方案.md`）：
+  - [x] Phase A：落地 Run Engine（`providers` 层，单机内存版）
+  - [x] Phase A：新增接口 `POST /api/ai/runs`、`GET /api/ai/runs/:runId/stream`、`POST /api/ai/runs/:runId/cancel`
+  - [x] Phase A：前端 transport 改为 run 模式；实现 `reconnectToStream`
+  - [x] Phase A：移除旧自定义 SSE chunk 映射（`parseSseBlock/toUiMessageChunk` 旧桥接）
+  - [x] Phase B：迁移 `plugin-activity` 到 `data-plugin_activity`
+  - [x] Phase B：迁移 `data-trace` 到 `data-trace`
+  - [x] Phase C：run 事件旁路落库（chunk/part 级）并支持历史重放一致
+  - [x] Phase C：移除旧历史重建兼容分支（按 part 直接重建）
+  - [ ] DoD：刷新页面不中断 run，重连可继续输出；点击停止可中断
 
 ### 插件协议与配置
 - [x] 接入插件清单校验（JSON Schema + 语义规则；口径见 `../项目功能/插件插件配置.md`）
@@ -64,6 +74,13 @@
 ## P2（增强）
 
 - [ ] Chat SSE 流式（`message.delta/tool.start/tool.end/message.done/error`）
+- [ ] 工具摘要升级（小模型摘要 + 规则降级）：
+  - [ ] 设计摘要契约（固定 JSON：`intent/outcome/keyFacts/errorReason/nextHint`）
+  - [ ] 摘要器实现可配置策略：`summaryProvider=rule|small-llm`
+  - [ ] 小模型摘要超时与失败降级到规则摘要（不阻塞主对话）
+  - [ ] 上下文预算控制：单条摘要长度上限 + 总窗口字符预算
+  - [ ] 工具定制提取器（先覆盖 playwright：`navigate/type/click/snapshot`）
+  - [ ] 摘要质量验收：失败原因保真、关键信息不丢失、成本可控
 - [~] Notification SSE 长连接通知（Phase 1 已落地；待补 topic 统一与前端通知面板）
 - [~] 宿主-插件通信总线（HPC Bus）：写死规则见 `宿主插件通信总线/宿主-插件通信总线_设计文档.md` §0；待 Hub 模块落地、宿主生产者迁入 Hub；**不**含：扩改 `loadPluginRuntimeExtension` ctx、`emitPluginActivity` 并 Hub（除非单独 ADR）
 - [ ] 结构化日志查询 `GET /api/logs/query`

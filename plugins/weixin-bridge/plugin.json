@@ -13,32 +13,7 @@
   "entry": "dist/runtime.mjs",
 
   "description": "微信登录、多账号会话（chat 内 /login）",
-
-  "triggerDescription": "进入 Chat 后发送 /login（模拟多账号会话）",
-
-  "examples": [{ "input": "/login" }],
-
-  "permissions": ["network.read", "network.write", "plugin.invoke", "mcp.call"],
-
-  "capabilities": {
-
-    "chat": true,
-
-    "llm": true,
-
-    "command": true,
-
-    "commandContextWrite": "result_only",
-
-    "isolatedContext": true,
-
-    "mcpAccess": "policy_granted",
-
-    "crossPluginInvoke": "policy_granted",
-
-    "orchestration": "runtime_lease"
-
-  },
+  "systemPrompt": "你是微信桥助手。优先帮助用户完成登录、会话切换、消息收发与常见故障排查，回答要简洁可执行。",
 
   "isolation": {
 
@@ -47,33 +22,13 @@
     "idleTimeoutSec": 900,
 
     "maxTurns": 60
-
   },
 
   "mcp": {
-    "allowedServers": []
-  },
-
-  "sessionProvider": {
-    "mode": "multi"
-  },
-
-  "guide": {
-    "welcome": "欢迎使用微信桥。",
-    "suggestions": [{ "prompt": "/help", "text": "/help" }],
-    "multiSession": {
-      "defaultSessionWelcome": "当前是默认引导会话，请先发送 /login 完成扫码登录。\n可用 /accounts 查看账号列表。",
-      "sessionWelcome": "已进入微信账号会话。\n可直接发送聊天内容，或使用 /send、/sync、/logout 等命令。",
-      "defaultSessionSuggestions": [
-        { "prompt": "/help", "text": "/help" },
-        { "prompt": "/login", "text": "/login" },
-        { "prompt": "/accounts", "text": "/accounts" }
-      ],
-      "sessionSuggestions": [
-        { "prompt": "/send  你好", "text": "/send  你好" },
-        { "prompt": "/logout", "text": "/logout" }
-      ]
-    }
+    "allowedServers": [
+      "playwright",
+      "sequential-thinking"
+    ]
   },
 
   "configSchema": {

@@ -9,11 +9,7 @@ export const pluginSpecV3Schema = {
     "apiVersion",
     "kind",
     "entry",
-    "description",
-    "triggerDescription",
-    "examples",
-    "permissions",
-    "capabilities"
+    "description"
   ],
   properties: {
     id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{1,62}$" },
@@ -21,8 +17,10 @@ export const pluginSpecV3Schema = {
     version: { type: "string", pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
     apiVersion: { const: "v3" },
     kind: { enum: ["runtime_plugin", "command_plugin"] },
+    commandMode: { enum: ["ephemeral_no_context", "ephemeral_with_context", "isolated_chat"] },
     entry: { type: "string", minLength: 1 },
     description: { type: "string", minLength: 1, maxLength: 500 },
+    systemPrompt: { type: "string", minLength: 1, maxLength: 8000 },
     triggerDescription: { type: "string", minLength: 1, maxLength: 200 },
     examples: {
       type: "array",
@@ -42,30 +40,6 @@ export const pluginSpecV3Schema = {
       type: "array",
       items: { type: "string", minLength: 1 },
       uniqueItems: true
-    },
-    capabilities: {
-      type: "object",
-      additionalProperties: false,
-      required: [
-        "chat",
-        "llm",
-        "command",
-        "commandContextWrite",
-        "isolatedContext",
-        "mcpAccess",
-        "crossPluginInvoke",
-        "orchestration"
-      ],
-      properties: {
-        chat: { type: "boolean" },
-        llm: { type: "boolean" },
-        command: { type: "boolean" },
-        commandContextWrite: { enum: ["none", "result_only", "full"] },
-        isolatedContext: { type: "boolean" },
-        mcpAccess: { enum: ["none", "declared", "policy_granted"] },
-        crossPluginInvoke: { enum: ["none", "declared", "policy_granted"] },
-        orchestration: { enum: ["none", "runtime_lease"] }
-      }
     },
     isolation: {
       type: "object",

@@ -3,10 +3,11 @@ import { fileURLToPath } from "node:url";
 import type {
   PluginClearSessionContext,
   PluginRuntimeExtensionDeps,
+  PluginSessionRow,
   PluginTurnContext,
   PluginTurnHandleResult
 } from "@wclaw/plugin-sdk";
-import { BasePluginRuntime, PluginBridgeError, toTurnResult } from "@wclaw/plugin-sdk";
+import { BasePluginRuntime, PluginBridgeError, toSessionRow, toTurnResult } from "@wclaw/plugin-sdk";
 type Topic = {
   id: number;
   title: string;
@@ -76,7 +77,41 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
 
   async executeTurn(ctx: PluginTurnContext): Promise<PluginTurnHandleResult> {
     const emit = this.createActivityEmitter(ctx);
-    emit("start", { summary: "开始执行 linux-do-fetch 流程。" });
+    const toolName = "linux-do-fetch.executeTurn";
+    const toolCallId = `linux-do-fetch-${Date.now().toString(36)}`;
+    const emitToolLikeActivity = (
+      phase: string,
+      payload: {
+        summary: string;
+        status?: "running" | "complete" | "incomplete" | "requires-action";
+        result?: unknown;
+        error?: unknown;
+      },
+    ) => {
+      const statusType =
+        payload.status ??
+        (phase === "error" ? "incomplete" : phase === "success" ? "complete" : "running");
+      emit(phase, {
+        summary: payload.summary,
+        toolName,
+        toolCallId,
+        argsText: JSON.stringify({ action: "executeTurn" }, null, 2),
+        status:
+          statusType === "incomplete" && payload.error !== undefined
+            ? { type: "incomplete", reason: "error", error: payload.error }
+            : { type: statusType },
+        result:
+          payload.result ??
+          (statusType === "incomplete"
+            ? {
+                isError: true,
+                content: [{ type: "text", text: String(payload.error ?? payload.summary) }],
+              }
+            : undefined),
+      });
+    };
+
+    emitToolLikeActivity("start", { summary: "开始执行 linux-do-fetch 流程。" });
     try {
      //前沿快讯 
     //  this.getTopics(ctx,"hot"),this.getTopics(ctx,"latest")
@@ -84,39 +119,47 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
       const hotTopics = await this.getTopics(ctx, "hot");
       const newsTopics = await this.getTopics(ctx, "c/news/34");
       const allTopics = [...hotTopics, ...newsTopics];
-      emit("info", { summary: `获取到 ${allTopics.length} 个主题` });
+      emitToolLikeActivity("info", { summary: `获取到 ${allTopics.length} 个主题` });
       const rankedTopics = await this.orderTopics(allTopics);
-      emit("info", { summary: `排序后 ${rankedTopics.length} 个主题` });
+      emitToolLikeActivity("info", { summary: `排序后 ${rankedTopics.length} 个主题` });
       if (allTopics.length === 0) {
-        emit("error", {
-          summary:
-            "列表为空：未得到含 topic_list 的 JSON（多为 CF 挑战页、网络或 MCP 异常）。请开 debugListFetch 看正文片段；WSL 建议有头 Playwright：DISPLAY=:0，MCP 勿加 --headless。"
+        const errorSummary =
+          "列表为空：未得到含 topic_list 的 JSON（多为 CF 挑战页、网络或 MCP 异常）。请开 debugListFetch 看正文片段；WSL 建议有头 Playwright：DISPLAY=:0，MCP 勿加 --headless。";
+        emitToolLikeActivity("error", {
+          summary: errorSummary,
+          error: errorSummary,
         });
         return toTurnResult(
           "[linux-do-fetch] 未获取到列表。请开启插件 debugListFetch 并检查 Playwright MCP / 网络 / WAF。"
         );
       }
       if (rankedTopics.length === 0) {
-        emit("error", {
-          summary: `共拉取 ${allTopics.length} 条，排序后均被过滤（置顶/公告/非 regular）。可换一个分类或减少过滤。`
+        const errorSummary = `共拉取 ${allTopics.length} 条，排序后均被过滤（置顶/公告/非 regular）。可换一个分类或减少过滤。`;
+        emitToolLikeActivity("error", {
+          summary: errorSummary,
+          error: errorSummary,
         });
         return toTurnResult("[linux-do-fetch] 排序后无可用主题。");
       }
       const llmPickedTopics = await this.pickTopicsByLlm(rankedTopics);
-      emit("info", { summary: `LLM 选出 ${llmPickedTopics.length} 个主题` });
+      emitToolLikeActivity("info", { summary: `LLM 选出 ${llmPickedTopics.length} 个主题` });
       // await this.writeTopicCache(rankedTopics, llmPickedTopics);
      
       const ganalysisResult = await this.ganalysisTopic(ctx,llmPickedTopics);
       if (ganalysisResult) {
-        emit("success", { summary: `执行成功: ${ganalysisResult.relativePath}` });
+        emitToolLikeActivity("success", {
+          summary: `执行成功: ${ganalysisResult.relativePath}`,
+          result: ganalysisResult,
+        });
         return toTurnResult(JSON.stringify(ganalysisResult, null, 2));
       } else {
-        emit("error", { summary: `执行失败: 没有找到适合分析的主题` });
+        const errorSummary = "执行失败: 没有找到适合分析的主题";
+        emitToolLikeActivity("error", { summary: errorSummary, error: errorSummary });
         return toTurnResult(`[linux-do-fetch] 执行失败: 没有找到适合分析的主题`);
       }
     } catch (error) {
       const msg =error instanceof PluginBridgeError ? `[${error.bridge}] ${error.code}: ${error.message}` : error instanceof Error ? error.message : String(error);
-      emit("error", { summary: `执行失败: ${msg}` });
+      emitToolLikeActivity("error", { summary: `执行失败: ${msg}`, error: msg });
       return toTurnResult(`[linux-do-fetch] 执行失败: ${msg}`);
     } finally {
       await this.mcp.destroy(ctx, "playwright").catch(() => undefined);
@@ -446,6 +489,27 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
 
   async clearSession(ctx: PluginClearSessionContext): Promise<void> {
     void ctx;
+  }
+
+  decorateSessions(): PluginSessionRow[] {
+    const sessionId = `${this.pluginId}:default`;
+    return [
+      toSessionRow({
+        sessionId,
+        title: "Linux.do 采集会话",
+        ui: {
+          subtitle: "topic fetch + llm analysis",
+          badges: ["linux.do", "playwright", "llm"],
+          welcome:
+            "Hello there!\nHow can I help you today?\n我会抓取 linux.do 热门主题并做可发布性分析。",
+          suggestions: [
+            { prompt: "/command linux-do-fetch", text: "开始抓取并分析" },
+            { prompt: "帮我总结最新抓取结果", text: "总结抓取结果" }
+          ]
+        },
+        persistence: "persist"
+      })
+    ];
   }
 
   private async writeTopicCache(rankedTopics: Topic[], llmPickedTopics: Topic[]): Promise<void> {

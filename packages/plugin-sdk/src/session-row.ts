@@ -4,6 +4,7 @@ type BuildSessionRowInput = {
   sessionId: string;
   updatedAt?: string;
   title?: string;
+  ui?: PluginSessionRow["ui"];
   persistence?: "persist" | "ephemeral";
   forceExecuteTurn?: boolean;
 };
@@ -17,6 +18,7 @@ export function toSessionRow(input: BuildSessionRowInput): PluginSessionRow {
     sessionId: input.sessionId,
     updatedAt: input.updatedAt ?? new Date().toISOString(),
     title: input.title,
+    ui: input.ui,
     persistence: input.persistence ?? "persist",
     forceExecuteTurn: input.forceExecuteTurn ?? false
   };

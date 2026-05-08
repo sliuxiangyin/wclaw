@@ -16,14 +16,7 @@ export function writeSse(res: ServerResponse, event: string, payload: unknown) {
 
 export function writeChunkSse(
   res: ServerResponse,
-  chunk: {
-    type: string;
-    id?: string;
-    delta?: string;
-    phase?: string;
-    data?: Record<string, unknown>;
-    messageMetadata?: Record<string, unknown>;
-  }
+  chunk: Record<string, unknown> & { type: string }
 ) {
   writeSse(res, "chunk", chunk);
 }

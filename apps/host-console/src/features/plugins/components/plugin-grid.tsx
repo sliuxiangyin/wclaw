@@ -21,15 +21,7 @@ function resolvePluginMode(item: PluginListItem): string {
     return "runtime_chat";
   }
 
-  const capabilities = (manifest.capabilities ?? {}) as Record<string, unknown>;
-  const isolatedContext = capabilities.isolatedContext === true;
-  const commandContextWrite = String(capabilities.commandContextWrite ?? "");
-  const llmEnabled = capabilities.llm === true;
-
-  if (isolatedContext) return "isolated_chat";
-  if (commandContextWrite === "none") return "ephemeral_no_context";
-  if (llmEnabled) return "ephemeral_with_context";
-  return "ephemeral_no_context";
+  return manifest.commandMode ?? "ephemeral_no_context";
 }
 
 export function PluginGrid({ items, onOpenConfig, onEnterChat }: Props) {

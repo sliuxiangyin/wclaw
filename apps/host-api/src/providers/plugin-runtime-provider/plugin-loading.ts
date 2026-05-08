@@ -122,11 +122,10 @@ async function scanDiskCatalog(): Promise<{ rows: ManifestScanRow[] }> {
           id: String(json.id),
           displayName: String(json.displayName),
           kind: json.kind as PluginManifest["kind"],
+          commandMode: json.commandMode as PluginManifest["commandMode"],
           version: String(json.version),
           description: String(json.description),
           entry: String(json.entry ?? ""),
-          capabilities:
-            ((json.capabilities as Record<string, unknown> | undefined) as PluginManifest["capabilities"]) ?? {},
           mcp: (json.mcp as PluginManifest["mcp"] | undefined) ?? undefined,
           sessionProvider: (json.sessionProvider as Record<string, unknown> | undefined) ?? undefined,
           configSchema: (json.configSchema as Record<string, unknown> | undefined) ?? undefined,
@@ -359,14 +358,16 @@ export class PluginLoading {
   }
 
   /**
-   * 为声明了 `capabilities.llm === true` 的 `runtime_plugin` / `command_plugin` 挂上 `invokeHostLlm`（与 Provider 镜像）。
+   * 为允许使用宿主 LLM 的插件挂上 `invokeHostLlm`：
+   * - runtime_plugin: 总是允许
+   * - command_plugin: 除 `ephemeral_no_context` 外允许
    */
   setInvokeHostLlm(factory: CreatePluginLoadingInvokeHostLlmFactory): void {
     const portView = createIngestRuntimePortView(() => this.instances);
     for (const item of this.items) {
       const kind = item.manifest?.kind;
       if (kind !== "runtime_plugin" && kind !== "command_plugin") continue;
-      if (item.manifest?.capabilities?.llm !== true) continue;
+      if (kind === "command_plugin" && item.manifest?.commandMode === "ephemeral_no_context") continue;
       const ext = this.instances.get(item.pluginId);
       if (!ext) continue;
       const invoke = factory({ pluginId: item.pluginId, getPluginRuntime: () => portView });

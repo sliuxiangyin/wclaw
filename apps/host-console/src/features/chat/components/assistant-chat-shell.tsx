@@ -3,7 +3,6 @@ import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
 import { Thread } from "@assistant-ui/react-ui";
 import { useMemo } from "react";
 import type { PluginListItem } from "../../../lib/api/plugins.api";
-import { resolvePluginThreadGuide } from "../lib/resolve-plugin-thread-guide";
 import { PluginChatTransport } from "../runtime/plugin-chat-transport";
 
 type Props = {
@@ -23,19 +22,11 @@ export function AssistantChatShell({ plugin, sessionId, onSessionsMaybeChanged }
     [plugin.pluginId, sessionId, onSessionsMaybeChanged]
   );
   const runtime = useChatRuntime({ transport });
-  const { welcomeMessage, suggestions } = useMemo(
-    () => resolvePluginThreadGuide(plugin, sessionId),
-    [plugin, sessionId]
-  );
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="h-full min-h-0 overflow-hidden">
         <Thread
-          welcome={{
-            message: welcomeMessage,
-            suggestions
-          }}
           strings={{
             composer: {
               input: { placeholder: "发送消息.... (@ 表示提及，/ 表示命令)" }

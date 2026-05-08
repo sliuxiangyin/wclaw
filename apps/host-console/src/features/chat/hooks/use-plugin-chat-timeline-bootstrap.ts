@@ -27,6 +27,15 @@ export function usePluginChatTimelineBootstrap(pluginId: string, sessionId: stri
   });
 
   const reload = useCallback(async () => {
+    if (!sessionId) {
+      setState({
+        loading: false,
+        error: null,
+        messages: [],
+        persistedActivitiesByAssistantMessageId: {}
+      });
+      return;
+    }
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const data = await getPluginChatHistoryTimeline(pluginId, sessionId, 200);
@@ -48,6 +57,15 @@ export function usePluginChatTimelineBootstrap(pluginId: string, sessionId: stri
   }, [pluginId, sessionId]);
 
   useEffect(() => {
+    if (!sessionId) {
+      setState({
+        loading: false,
+        error: null,
+        messages: [],
+        persistedActivitiesByAssistantMessageId: {}
+      });
+      return;
+    }
     let cancel = false;
     setState({
       loading: true,
@@ -82,6 +100,7 @@ export function usePluginChatTimelineBootstrap(pluginId: string, sessionId: stri
   }, [pluginId, sessionId]);
 
   useEffect(() => {
+    if (!sessionId) return;
     const onSessionUpdated = (ev: Event) => {
       const ce = ev as CustomEvent<ChatSessionUpdatedDetail>;
       const d = ce.detail;

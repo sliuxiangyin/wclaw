@@ -26,11 +26,12 @@ function timelineMessageToUIMessage(row: PluginChatTimelineMessage): UIMessage {
           source: asAssistantMetaSource(row)
         } as Record<string, unknown>)
       : undefined;
+  const parts = row.role === "assistant" ? row.parts : [{ type: "text", text: row.content }];
   return {
     id,
     role: row.role,
     metadata: md,
-    parts: [{ type: "text", text: row.content }]
+    parts: parts as UIMessage["parts"]
   };
 }
 
@@ -93,9 +94,4 @@ export function timelineToUiBootstrap(
     }
   }
   return { messages: out, persistedActivitiesByAssistantMessageId };
-}
-
-/** @deprecated 请用 timelineToUiBootstrap；保留以便临时兼容 */
-export function timelineToUiMessages(items: PluginChatTimelineMessage[]): UIMessage[] {
-  return timelineToUiBootstrap(items).messages;
 }

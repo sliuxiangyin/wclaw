@@ -2,29 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { usePluginChat } from "../../features/chat/hooks/use-plugin-chat";
 import { usePluginChatTimelineBootstrap } from "../../features/chat/hooks/use-plugin-chat-timeline-bootstrap";
+import { resolvePluginMode, statusLabel, type PluginChatEventItem } from "../../features/chat/lib/plugin-chat-view";
 import { getAiChatEvents } from "../../lib/api/ai-chat.api";
 import { getPlugins, type PluginListItem } from "../../lib/api/plugins.api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PanelLeftIcon, ShareIcon } from "lucide-react";
 import Ai05 from "@/components/ai-05";
 import type { PluginActivityPayload } from "@/lib/api/ai-chat.api";
-
-function statusLabel(status: "valid" | "invalid") {
-  return status === "valid" ? "有效（valid）" : "无效（invalid）";
-}
-
-function resolvePluginMode(plugin: PluginListItem): string {
-  const manifest = plugin.manifest;
-  if (!manifest) return "-";
-  if (manifest.kind === "runtime_plugin") return "runtime_chat";
-  const capabilities = (manifest.capabilities ?? {}) as Record<string, unknown>;
-  if (capabilities.isolatedContext === true) return "isolated_chat";
-  if (String(capabilities.commandContextWrite ?? "") === "none") return "ephemeral_no_context";
-  if (capabilities.llm === true) return "ephemeral_with_context";
-  return "ephemeral_no_context";
-}
 
 export function PluginChatPage() {
   const { pluginId } = useParams<{ pluginId: string }>();
@@ -101,29 +86,25 @@ type PluginChatContentProps = {
 };
 
 function PluginChatContent({ plugin }: PluginChatContentProps) {
-  const { error, sessionId, sessions, loadingSessions, selectSession, refreshSessions } =
+  const { error, sessionId, currentSession, sessions, loadingSessions, selectSession, refreshSessions } =
     usePluginChat(plugin);
   const chatBootstrap = usePluginChatTimelineBootstrap(plugin.pluginId, sessionId);
   const [chatSurfaceKey, setChatSurfaceKey] = useState(0);
   const [pluginActivities, setPluginActivities] = useState<PluginActivityPayload[]>([]);
-  const [events, setEvents] = useState<
-    Array<{
-      id: number;
-      type: string;
-      source: "host" | "llm" | "plugin" | "tool";
-      createdAt: string;
-    }>
-  >([]);
+  const [events, setEvents] = useState<PluginChatEventItem[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [eventsError, setEventsError] = useState<string | null>(null);
   const manifest = plugin.manifest;
   const mode = resolvePluginMode(plugin);
-  const isDefaultSession = sessionId === `${plugin.pluginId}:default`;
-  const capabilityTags = Object.entries(manifest?.capabilities ?? {})
-    .filter(([, enabled]) => Boolean(enabled))
-    .map(([key]) => key);
+  const hasActiveSession = Boolean(sessionId);
 
   useEffect(() => {
+    if (!hasActiveSession) {
+      setEvents([]);
+      setEventsError(null);
+      setLoadingEvents(false);
+      return;
+    }
     let mounted = true;
     async function loadEvents() {
       setLoadingEvents(true);
@@ -149,7 +130,7 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
     return () => {
       mounted = false;
     };
-  }, [plugin.pluginId, sessionId]);
+  }, [plugin.pluginId, sessionId, hasActiveSession]);
 
   useEffect(() => {
     setPluginActivities([]);
@@ -172,23 +153,26 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
                 <Badge variant="outline">{statusLabel(plugin.status)}</Badge>
                 <Badge variant="secondary">{manifest?.kind ?? "unknown"}</Badge>
                 <Badge variant="outline">模式：{mode}</Badge>
-                <Badge variant={isDefaultSession ? "outline" : "secondary"}>
-                  当前会话：{isDefaultSession ? "默认引导会话" : "账号会话"}
-                </Badge>
+                {currentSession?.persistence ? (
+                  <Badge variant={currentSession.persistence === "ephemeral" ? "outline" : "secondary"}>
+                    持久化：{currentSession.persistence}
+                  </Badge>
+                ) : null}
+                {currentSession?.ui?.badges?.map((badge) => (
+                  <Badge key={badge} variant="outline">
+                    {badge}
+                  </Badge>
+                ))}
               </div>
-              {capabilityTags.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {capabilityTags.map((tag) => (
-                    <Badge key={tag} variant="outline">
-                      {tag}
-                    </Badge>
-                  ))}
-                </div>
-              ) : null}
             </CardHeader>
-            {manifest?.description ? (
+            {currentSession?.ui?.description || manifest?.description ? (
               <CardContent>
-                <p className="text-sm text-muted-foreground">{manifest.description}</p>
+                {currentSession?.ui?.description ? (
+                  <p className="text-sm text-muted-foreground">{currentSession.ui.description}</p>
+                ) : null}
+                {manifest?.description ? (
+                  <p className="text-sm text-muted-foreground">{manifest.description}</p>
+                ) : null}
               </CardContent>
             ) : null}
           </Card>
@@ -210,9 +194,12 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
                     className="justify-start"
                     onClick={() => void selectSession(s.sessionId)}
                   >
-                    {s.title}
+                    {s.title ?? s.sessionId}
                   </Button>
                 ))}
+                {!loadingSessions && sessions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">插件未暴露会话列表。</p>
+                ) : null}
               </div>
             </CardContent>
           </Card>
@@ -225,7 +212,9 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
                   type="button"
                   size="sm"
                   variant="outline"
+                  disabled={!hasActiveSession}
                   onClick={async () => {
+                    if (!hasActiveSession) return;
                     setLoadingEvents(true);
                     setEventsError(null);
                     try {
@@ -283,7 +272,11 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
         <section className="flex h-[calc(100vh-8rem)] ">
             {error ? <p className="px-4 pt-2 text-sm text-destructive">{error}</p> : null}
             <main className="flex-1 overflow-hidden min-h-0">
-              {chatBootstrap.loading ? (
+              {!hasActiveSession ? (
+                <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-border px-4 text-sm text-muted-foreground">
+                  插件未暴露 `decorateSessions`，当前不显示聊天面板。
+                </div>
+              ) : chatBootstrap.loading ? (
                 <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-border px-4 text-sm text-muted-foreground">
                   正在加载会话历史…
                 </div>
@@ -296,6 +289,7 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
                     key={`${sessionId}-${chatSurfaceKey}`}
                     plugin={plugin}
                     sessionId={sessionId}
+                    session={currentSession}
                     initialMessages={chatBootstrap.messages}
                     persistedActivitiesByAssistantMessageId={
                       chatBootstrap.persistedActivitiesByAssistantMessageId
@@ -310,6 +304,10 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
                       setChatSurfaceKey((k) => k + 1);
                       await refreshSessions();
                     }}
+                    title={currentSession?.title ?? manifest?.displayName ?? plugin.pluginId}
+                    subtitle={currentSession?.ui?.subtitle}
+                    welcomeMessage={currentSession?.ui?.welcome}
+                    suggestions={currentSession?.ui?.suggestions}
                   />
                 </>
               )}

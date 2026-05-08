@@ -28,6 +28,7 @@ export type AiChatOrchestrateRoundInput = {
   messages: OrchestrateChatInput["messages"];
   model?: string;
   traceId?: string | null;
+  abortSignal?: AbortSignal;
   stream?: OrchestrateChatInput["stream"];
   reflowMetadata?: Record<string, unknown>;
 };
@@ -52,9 +53,9 @@ export class AiChatOrchestrator {
       throw new Error("plugin not found");
     }
 
-    const { sessionId, messages, model, traceId, stream, reflowMetadata } = input;
+    const { sessionId, messages, model, traceId, abortSignal, stream, reflowMetadata } = input;
     const userMessage = extractLastUserMessage(messages);
-    const shouldPersist = await resolveSessionPersistDecision(this.pluginRuntime, this.pluginId);
+    const shouldPersist = await resolveSessionPersistDecision(this.hostPlugin);
 
     if (shouldPersist(sessionId)) {
       const writeOptions: AppendChatMessageOptions = { traceId: traceId ?? null };
@@ -86,6 +87,7 @@ export class AiChatOrchestrator {
       messages,
       model,
       traceId,
+      abortSignal,
       stream
     };
 
@@ -186,6 +188,7 @@ export async function orchestrateChat(input: OrchestrateChatInput): Promise<Orch
       messages: input.messages,
       model: input.model,
       traceId: input.traceId,
+      abortSignal: input.abortSignal,
       stream: input.stream,
       reflowMetadata: input.reflowMetadata
     });

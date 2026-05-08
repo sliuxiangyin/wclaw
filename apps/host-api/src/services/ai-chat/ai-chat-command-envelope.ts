@@ -5,6 +5,7 @@
 import type { ChatSessionState } from "../../repositories/chat-session.repository.js";
 import type { PluginObjectItem } from "../plugin-catalog/plugin-catalog.service.js";
 import { resolveCommandPluginMode } from "./ai-chat-command-plugin.js";
+import { parseMcpExplicitCommand, type ParsedMcpExplicitCommand } from "./ai-chat-mcp-explicit-command.js";
 
 export type HostCommandRoute = {
   targetPluginId: string;
@@ -33,8 +34,15 @@ export type AiOrchestrationPath =
   | { kind: "isolated_close" }
   | { kind: "isolated_delegate" }
   | { kind: "host_bad_format" }
+  | { kind: "host_mcp_cross_plugin_forbidden" }
   | { kind: "runtime_default" }
-  | { kind: "host_command"; targetPluginId: string; commandText: string };
+  | { kind: "host_command"; targetPluginId: string; commandText: string }
+  | {
+    kind: "host_mcp_command";
+    targetPluginId: string;
+    commandText: string;
+    parsedMcp: ParsedMcpExplicitCommand;
+  };
 
 /**
  * 路由判别（与 `resolveCommandPluginMode` 对齐）：
@@ -72,29 +80,40 @@ export class AiChatCommandEnvelope {
       (cmdMode === "runtime_plugin" && sessionRow?.forceExecuteTurn === true);
 
     if (alwaysHostCommand) {
-      if (routed) {
-        return {
-          kind: "host_command",
-          targetPluginId: routed.targetPluginId,
-          commandText: routed.commandText
-        };
-      }
-      return {
-        kind: "host_command",
-        targetPluginId: plugin.pluginId,
-        commandText: userMessage.trim() || "default"
-      };
+      const targetPluginId = routed?.targetPluginId ?? plugin.pluginId;
+      const commandText = routed?.commandText ?? (userMessage.trim() || "default");
+      return this.resolveHostCommandOrMcpPath(plugin.pluginId, targetPluginId, commandText);
     }
 
     if (routed) {
-      return {
-        kind: "host_command",
-        targetPluginId: routed.targetPluginId,
-        commandText: routed.commandText
-      };
+      return this.resolveHostCommandOrMcpPath(plugin.pluginId, routed.targetPluginId, routed.commandText);
     }
 
     return { kind: "runtime_default" };
+  }
+
+  private static resolveHostCommandOrMcpPath(
+    hostPluginId: string,
+    targetPluginId: string,
+    commandText: string
+  ): AiOrchestrationPath {
+    const parsedMcp = parseMcpExplicitCommand(commandText);
+    if (parsedMcp) {
+      if (targetPluginId !== hostPluginId) {
+        return { kind: "host_mcp_cross_plugin_forbidden" };
+      }
+      return {
+        kind: "host_mcp_command",
+        targetPluginId,
+        commandText,
+        parsedMcp
+      };
+    }
+    return {
+      kind: "host_command",
+      targetPluginId,
+      commandText
+    };
   }
 
   /**

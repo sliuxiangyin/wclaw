@@ -3,11 +3,11 @@ import type { PluginRuntimePort } from "../core/plugin-runtime.port.js";
 import { AppError } from "../core/app-error.js";
 import { ERROR_CODES } from "../core/error-codes.js";
 import { ok } from "../core/response.js";
+import { AiRunProvider } from "../providers/ai-run-provider/index.js";
 import { listChatEvents } from "../repositories/chat-event.repository.js";
 import { orchestrateChat } from "../services/ai-chat/ai-chat.service.js";
-import { persistPluginActivityForAiChat } from "../services/plugin-chat/plugin-chat-activity.service.js";
-import { chunkText, writeChunkSse, writeSse } from "./ai-chat-sse.util.js";
-import { validateAiChatBody, toAiChatErrorPayload, type AiChatBody } from "./ai-chat-validation.js";
+import { executeRun } from "./ai-run-executor.js";
+import { validateAiChatBody, type AiChatBody } from "./ai-chat-validation.js";
 
 type AiChatEventsQuery = {
   pluginId?: string;
@@ -25,129 +25,111 @@ async function loadHostPluginOrThrow(pluginRuntime: PluginRuntimePort, pluginId:
   return row;
 }
 
-export async function registerAiChatRoutes(app: FastifyInstance, pluginRuntime: PluginRuntimePort) {
+type RunStartBody = AiChatBody;
+
+type RunStreamParams = {
+  runId: string;
+};
+
+type RunStreamQuery = {
+  lastSeq?: string;
+};
+
+export async function registerAiChatRoutes(
+  app: FastifyInstance,
+  pluginRuntime: PluginRuntimePort,
+  runProvider: AiRunProvider
+) {
   app.post<{ Body: AiChatBody }>("/api/ai/chat", async (request, reply) => {
     const body = request.body;
     validateAiChatBody(body);
 
-    const wantsSse = (request.headers.accept ?? "").includes("text/event-stream");
-    if (!wantsSse) {
-      const hostPlugin = await loadHostPluginOrThrow(pluginRuntime, body.pluginId);
-      const result = await orchestrateChat({
-        pluginRuntime,
-        plugin: hostPlugin,
-        pluginId: body.pluginId,
-        sessionId: body.sessionId,
-        messages: body.messages,
-        model: body.model,
-        traceId: request.id
-      });
-
-      return ok(result, request.id);
-    }
-
-    request.raw.setTimeout(0);
-    reply.hijack();
-    const res = reply.raw;
-    const requestOrigin =
-      typeof request.headers.origin === "string" && request.headers.origin.length > 0
-        ? request.headers.origin
-        : "*";
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-      Vary: "Origin",
-      "Access-Control-Allow-Origin": requestOrigin,
-      "Access-Control-Allow-Credentials": "true"
-    });
-    writeChunkSse(res, { type: "data-trace", data: { traceId: request.id } });
-    let streamStarted = false;
-    let streamHasDelta = false;
-
-    const ensureSseStarted = (meta?: { sourceType: "runtime" | "plugin"; sourcePluginId: string | null }) => {
-      if (streamStarted) return;
-      streamStarted = true;
-      const source =
-        meta && meta.sourceType === "plugin" && meta.sourcePluginId ? `plugin:${meta.sourcePluginId}` : "runtime";
-      writeChunkSse(res, {
-        type: "start",
-        messageMetadata: { source }
-      });
-      writeChunkSse(res, { type: "start-step" });
-      writeChunkSse(res, { type: "text-start", id: "text-1" });
-    };
     const hostPlugin = await loadHostPluginOrThrow(pluginRuntime, body.pluginId);
-    try {
-      const result = await orchestrateChat({
-        pluginRuntime,
-        plugin: hostPlugin,
-        pluginId: body.pluginId,
-        sessionId: body.sessionId,
-        messages: body.messages,
-        model: body.model,
-        traceId: request.id,
-        stream: {
-          onStart: (meta) => {
-            ensureSseStarted(meta);
-          },
-          onTextDelta: (delta) => {
-            ensureSseStarted();
-            streamHasDelta = true;
-            writeChunkSse(res, { type: "text-delta", id: "text-1", delta });
-          },
-          onPluginActivity: (payload) => {
-            persistPluginActivityForAiChat({
-              pluginId: body.pluginId,
-              sessionId: body.sessionId,
-              traceId: request.id,
-              phase: payload.phase,
-              data: payload.data
-            });
-            ensureSseStarted();
-            writeChunkSse(res, {
-              type: "plugin-activity",
-              phase: payload.phase,
-              data: payload.data ?? {}
-            });
-          }
-        }
-      });
+    const result = await orchestrateChat({
+      pluginRuntime,
+      plugin: hostPlugin,
+      pluginId: body.pluginId,
+      sessionId: body.sessionId,
+      messages: body.messages,
+      model: body.model,
+      traceId: request.id
+    });
 
-      if (!streamStarted) {
-        const source =
-          result.sourceType === "plugin" && result.sourcePluginId ? `plugin:${result.sourcePluginId}` : "runtime";
-        writeChunkSse(res, {
-          type: "start",
-          messageMetadata: { source }
-        });
-        writeChunkSse(res, { type: "start-step" });
-        writeChunkSse(res, { type: "text-start", id: "text-1" });
+    return ok(result, request.id);
+  });
+
+  app.post<{ Body: RunStartBody }>("/api/ai/runs", async (request) => {
+    const body = request.body;
+    validateAiChatBody(body);
+    const run = runProvider.createRun({
+      pluginId: body.pluginId,
+      sessionId: body.sessionId,
+      traceId: request.id
+    });
+    void executeRun({
+      runProvider,
+      runId: run.runId,
+      pluginRuntime,
+      body,
+      traceId: request.id
+    });
+    return ok(
+      {
+        runId: run.runId,
+        traceId: request.id,
+        status: run.status
+      },
+      request.id
+    );
+  });
+
+  app.get<{ Params: RunStreamParams; Querystring: RunStreamQuery }>(
+    "/api/ai/runs/:runId/stream",
+    async (request, reply) => {
+      const run = runProvider.getRun(request.params.runId);
+      if (!run) {
+        throw new AppError(ERROR_CODES.INVALID_REQUEST, "run not found", 404);
       }
-      if (!streamHasDelta) {
-        for (const delta of chunkText(result.reply, 64)) {
-          writeChunkSse(res, { type: "text-delta", id: "text-1", delta });
-        }
-      } else if (!result.skipSseFinalReplyChunks && result.reply) {
-        for (const delta of chunkText(result.reply, 64)) {
-          writeChunkSse(res, { type: "text-delta", id: "text-1", delta });
-        }
+      const lastSeq = request.query.lastSeq ? Number(request.query.lastSeq) : 0;
+      if (request.query.lastSeq && !Number.isFinite(lastSeq)) {
+        throw new AppError(ERROR_CODES.INVALID_REQUEST, "lastSeq must be a number", 400);
       }
-      writeChunkSse(res, { type: "text-end", id: "text-1" });
-      writeChunkSse(res, { type: "finish-step" });
-      writeChunkSse(res, {
-        type: "finish",
-        messageMetadata: { mode: result.mode, isolatedPluginId: result.isolatedPluginId }
+      request.raw.setTimeout(0);
+      reply.hijack();
+      const res = reply.raw;
+      const requestOrigin =
+        typeof request.headers.origin === "string" && request.headers.origin.length > 0
+          ? request.headers.origin
+          : "*";
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+        Vary: "Origin",
+        "Access-Control-Allow-Origin": requestOrigin,
+        "Access-Control-Allow-Credentials": "true"
       });
-      res.end();
-      return;
-    } catch (error) {
-      const err = toAiChatErrorPayload(error);
-      writeSse(res, "error", err);
-      res.end();
-      return;
+      const subscribed = runProvider.subscribe(run.runId, res, lastSeq);
+      if (!subscribed) {
+        res.end();
+        return;
+      }
+      request.raw.on("close", () => {
+        runProvider.unsubscribe(run.runId, res);
+      });
+      if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+        res.end();
+      }
     }
+  );
+
+  app.post<{ Params: RunStreamParams }>("/api/ai/runs/:runId/cancel", async (request) => {
+    const okCancel = runProvider.cancel(request.params.runId);
+    if (!okCancel) {
+      throw new AppError(ERROR_CODES.INVALID_REQUEST, "run not found", 404);
+    }
+    return ok({ runId: request.params.runId, cancelled: true }, request.id);
   });
 
   app.get<{ Querystring: AiChatEventsQuery }>("/api/ai/events", async (request) => {
