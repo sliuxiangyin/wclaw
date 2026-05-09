@@ -1,6 +1,6 @@
 import { resolvePluginEntryAbsolutePath as resolvePluginEntryPath } from "../../core/plugin-paths.js";
 import type { PluginRuntimePort } from "../../core/plugin-runtime.port.js";
-import { PluginObjectItem } from "../../providers/plugin-runtime-provider/plugin-loading.js";
+import type { PluginObjectItem } from "../../core/plugin-object.types.js";
 
 export type { PluginManifest, PluginObjectItem } from "../../core/plugin-object.types.js";
 

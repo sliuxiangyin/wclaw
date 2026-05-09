@@ -9,68 +9,12 @@ export function validatePluginSpec(spec: unknown): ValidationResult {
     return { valid: false, errors: schemaErrors };
   }
 
-  const guideErrors = validateGuide(spec as Record<string, unknown>);
   const semanticErrors = validateSemantics(spec as Record<string, unknown>);
-  const merged = [...guideErrors, ...semanticErrors];
+  const merged = semanticErrors;
   return {
     valid: merged.length === 0,
     errors: merged
   };
-}
-
-function validateGuide(spec: Record<string, unknown>): string[] {
-  const g = spec.guide;
-  if (g === undefined) return [];
-  const errors: string[] = [];
-  if (typeof g !== "object" || g === null || Array.isArray(g)) {
-    return ["guide 必须是 object"];
-  }
-  const o = g as Record<string, unknown>;
-  if (o.welcome !== undefined && typeof o.welcome !== "string") errors.push("guide.welcome 必须是 string");
-  if (o.suggestions !== undefined) {
-    errors.push(...validateGuideSuggestions(o.suggestions, "guide.suggestions"));
-  }
-  if (o.multiSession !== undefined) {
-    const ms = o.multiSession;
-    if (typeof ms !== "object" || ms === null || Array.isArray(ms)) {
-      errors.push("guide.multiSession 必须是 object");
-    } else {
-      const m = ms as Record<string, unknown>;
-      if (m.defaultSessionWelcome !== undefined && typeof m.defaultSessionWelcome !== "string") {
-        errors.push("guide.multiSession.defaultSessionWelcome 必须是 string");
-      }
-      if (m.sessionWelcome !== undefined && typeof m.sessionWelcome !== "string") {
-        errors.push("guide.multiSession.sessionWelcome 必须是 string");
-      }
-      if (m.defaultSessionSuggestions !== undefined) {
-        errors.push(...validateGuideSuggestions(m.defaultSessionSuggestions, "guide.multiSession.defaultSessionSuggestions"));
-      }
-      if (m.sessionSuggestions !== undefined) {
-        errors.push(...validateGuideSuggestions(m.sessionSuggestions, "guide.multiSession.sessionSuggestions"));
-      }
-    }
-  }
-  return errors;
-}
-
-function validateGuideSuggestions(value: unknown, path: string): string[] {
-  if (!Array.isArray(value)) return [`${path} 必须是数组`];
-  const errors: string[] = [];
-  for (let i = 0; i < value.length; i++) {
-    const item = value[i];
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      errors.push(`${path}[${i}] 必须是 object`);
-      continue;
-    }
-    const row = item as Record<string, unknown>;
-    if (typeof row.prompt !== "string" || row.prompt.trim() === "") {
-      errors.push(`${path}[${i}].prompt 必须是非空 string`);
-    }
-    if (row.text !== undefined && typeof row.text !== "string") {
-      errors.push(`${path}[${i}].text 必须是 string`);
-    }
-  }
-  return errors;
 }
 
 function validateSchemaShape(spec: unknown): string[] {
@@ -108,6 +52,9 @@ function validateSchemaShape(spec: unknown): string[] {
   }
   if (obj.systemPrompt !== undefined && typeof obj.systemPrompt !== "string") {
     errors.push("systemPrompt 必须是 string");
+  }
+  if (obj.guide !== undefined) {
+    errors.push("guide 字段已废弃并从清单移除，欢迎语与建议请通过 decorateSessions / 会话行 ui 提供");
   }
   if (obj.kind === "command_plugin" && obj.commandMode === undefined) {
     errors.push("kind=command_plugin 时，commandMode 必填");

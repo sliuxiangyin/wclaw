@@ -1,12 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import type { PluginRuntimePort } from "../core/plugin-runtime.port.js";
+import type { NotificationStreamInput } from "../core/notification.types.js";
+import type { AiRunProvider } from "../providers/ai-run-provider/index.js";
 import { AppError } from "../core/app-error.js";
 import { ERROR_CODES } from "../core/error-codes.js";
 import { ok } from "../core/response.js";
-import { AiRunProvider } from "../providers/ai-run-provider/index.js";
 import { listChatEvents } from "../repositories/chat-event.repository.js";
-import { orchestrateChat } from "../services/ai-chat/ai-chat.service.js";
-import { executeRun } from "./ai-run-executor.js";
+import { handleAiChatStream } from "../controllers/ai-chat-stream.controller.js";
 import { validateAiChatBody, type AiChatBody } from "./ai-chat-validation.js";
 
 type AiChatEventsQuery = {
@@ -17,119 +17,35 @@ type AiChatEventsQuery = {
   offset?: string;
 };
 
-async function loadHostPluginOrThrow(pluginRuntime: PluginRuntimePort, pluginId: string) {
-  const row = await pluginRuntime.plugin(pluginId);
-  if (!row || row.status !== "valid" || !row.manifest) {
-    throw new AppError(ERROR_CODES.PLUGIN_NOT_FOUND, "plugin not found", 404);
-  }
-  return row;
-}
-
-type RunStartBody = AiChatBody;
-
-type RunStreamParams = {
-  runId: string;
+type AiChatCancelBody = {
+  pluginId?: string;
+  sessionId?: string;
 };
 
-type RunStreamQuery = {
-  lastSeq?: string;
-};
+type PublishNotificationStream = (input: NotificationStreamInput) => void;
 
 export async function registerAiChatRoutes(
   app: FastifyInstance,
   pluginRuntime: PluginRuntimePort,
-  runProvider: AiRunProvider
+  aiRunProvider: AiRunProvider,
+  publishNotification?: PublishNotificationStream
 ) {
   app.post<{ Body: AiChatBody }>("/api/ai/chat", async (request, reply) => {
-    const body = request.body;
-    validateAiChatBody(body);
-
-    const hostPlugin = await loadHostPluginOrThrow(pluginRuntime, body.pluginId);
-    const result = await orchestrateChat({
-      pluginRuntime,
-      plugin: hostPlugin,
-      pluginId: body.pluginId,
-      sessionId: body.sessionId,
-      messages: body.messages,
-      model: body.model,
-      traceId: request.id
+    validateAiChatBody(request.body, {
+      pluginId: request.headers["x-wclaw-plugin-id"],
+      sessionId: request.headers["x-wclaw-session-id"]
     });
-
-    return ok(result, request.id);
+    await handleAiChatStream(request, reply, pluginRuntime, aiRunProvider, publishNotification);
   });
 
-  app.post<{ Body: RunStartBody }>("/api/ai/runs", async (request) => {
-    const body = request.body;
-    validateAiChatBody(body);
-    const run = runProvider.createRun({
-      pluginId: body.pluginId,
-      sessionId: body.sessionId,
-      traceId: request.id
-    });
-    void executeRun({
-      runProvider,
-      runId: run.runId,
-      pluginRuntime,
-      body,
-      traceId: request.id
-    });
-    return ok(
-      {
-        runId: run.runId,
-        traceId: request.id,
-        status: run.status
-      },
-      request.id
-    );
-  });
-
-  app.get<{ Params: RunStreamParams; Querystring: RunStreamQuery }>(
-    "/api/ai/runs/:runId/stream",
-    async (request, reply) => {
-      const run = runProvider.getRun(request.params.runId);
-      if (!run) {
-        throw new AppError(ERROR_CODES.INVALID_REQUEST, "run not found", 404);
-      }
-      const lastSeq = request.query.lastSeq ? Number(request.query.lastSeq) : 0;
-      if (request.query.lastSeq && !Number.isFinite(lastSeq)) {
-        throw new AppError(ERROR_CODES.INVALID_REQUEST, "lastSeq must be a number", 400);
-      }
-      request.raw.setTimeout(0);
-      reply.hijack();
-      const res = reply.raw;
-      const requestOrigin =
-        typeof request.headers.origin === "string" && request.headers.origin.length > 0
-          ? request.headers.origin
-          : "*";
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-        Vary: "Origin",
-        "Access-Control-Allow-Origin": requestOrigin,
-        "Access-Control-Allow-Credentials": "true"
-      });
-      const subscribed = runProvider.subscribe(run.runId, res, lastSeq);
-      if (!subscribed) {
-        res.end();
-        return;
-      }
-      request.raw.on("close", () => {
-        runProvider.unsubscribe(run.runId, res);
-      });
-      if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
-        res.end();
-      }
+  app.post<{ Body: AiChatCancelBody }>("/api/ai/chat/cancel", async (request) => {
+    const pluginId = request.body?.pluginId ?? request.headers["x-wclaw-plugin-id"];
+    const sessionId = request.body?.sessionId ?? request.headers["x-wclaw-session-id"];
+    if (Array.isArray(pluginId) || Array.isArray(sessionId) || !pluginId || !sessionId) {
+      throw new AppError(ERROR_CODES.INVALID_REQUEST, "pluginId and sessionId are required", 400);
     }
-  );
-
-  app.post<{ Params: RunStreamParams }>("/api/ai/runs/:runId/cancel", async (request) => {
-    const okCancel = runProvider.cancel(request.params.runId);
-    if (!okCancel) {
-      throw new AppError(ERROR_CODES.INVALID_REQUEST, "run not found", 404);
-    }
-    return ok({ runId: request.params.runId, cancelled: true }, request.id);
+    const cancelled = aiRunProvider.cancelSession(pluginId, sessionId);
+    return ok({ pluginId, sessionId, cancelled }, request.id);
   });
 
   app.get<{ Querystring: AiChatEventsQuery }>("/api/ai/events", async (request) => {

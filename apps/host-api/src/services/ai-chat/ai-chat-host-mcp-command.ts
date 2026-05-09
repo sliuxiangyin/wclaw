@@ -1,7 +1,7 @@
 import { appendChatEvent } from "../../repositories/chat-event.repository.js";
 import { plugin } from "../plugin-catalog/plugin-catalog.service.js";
 import { generateWithConfiguredLlm, streamWithConfiguredLlm } from "../llm/llm-runtime.service.js";
-import { buildWithContextWindow } from "./ai-chat-context-window.js";
+import { buildWithContextWindow, sanitizeMessagesForLlmWindow } from "./ai-chat-context-window.js";
 import { appendLlmFailedEvent } from "./ai-chat-events.util.js";
 import { resolveCommandPluginMode } from "./ai-chat-command-plugin.js";
 import { executeMcpExplicitCommand, type ParsedMcpExplicitCommand } from "./ai-chat-mcp-explicit-command.js";
@@ -63,7 +63,7 @@ export async function orchestrateHostMcpCommandMatched(
   });
 
   if (mode === "ephemeral_with_context") {
-    const llmMessages = buildWithContextWindow(ctx.messages, 12);
+    const llmMessages = sanitizeMessagesForLlmWindow(buildWithContextWindow(ctx.messages, 12));
     const pluginPrefix = `[plugin:${cmd.targetPluginId}] ${commandResult.output}\n`;
     const pluginSystemPrompt = target.manifest.systemPrompt;
     const baseMessages = [

@@ -1,3 +1,5 @@
+import type { UIMessage } from "ai";
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8787";
 
 type ApiError = { code: string; message: string } | null;
@@ -57,36 +59,13 @@ export type PluginSessionRowDto = {
   };
 };
 
-export type PluginChatTimelineMessage = {
-  id: number;
-  role: "user" | "assistant";
-  content: string;
-  createdAt: string;
-  traceId: string | null;
-  sourceType: "runtime" | "plugin";
-  sourcePluginId: string | null;
-  llmEligible: boolean;
-  contextSummary: string | null;
-  parts: Array<Record<string, unknown>>;
-  activities: PluginChatTimelineActivity[];
-};
-
-export type PluginChatTimelineActivity = {
-  id: number;
-  traceId: string;
-  seq: number;
-  phase: string;
-  data: Record<string, unknown>;
-  createdAt: string;
-};
-
 type HistoryTimelineResponse = {
   ok: boolean;
   data: {
     pluginId: string;
     sessionId: string;
     limit: number;
-    timeline: PluginChatTimelineMessage[];
+    messages: UIMessage[];
   };
   error: ApiError;
 };
@@ -192,6 +171,29 @@ export async function clearPluginSessionMessages(pluginId: string, sessionId: st
   const payload = (await res.json()) as ClearSessionMessagesResponse;
   if (!res.ok || !payload.ok || payload.error) {
     throw new Error(payload.error?.message ?? "clear session messages failed");
+  }
+  return payload.data;
+}
+
+type CancelAiChatRunResponse = {
+  ok: boolean;
+  data: { pluginId: string; sessionId: string; cancelled: boolean };
+  error: ApiError;
+};
+
+export async function cancelAiChatRun(pluginId: string, sessionId: string) {
+  const res = await fetch(`${API_BASE_URL}/api/ai/chat/cancel`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Wclaw-Plugin-Id": pluginId,
+      "X-Wclaw-Session-Id": sessionId
+    },
+    body: JSON.stringify({ pluginId, sessionId })
+  });
+  const payload = (await res.json()) as CancelAiChatRunResponse;
+  if (!res.ok || !payload.ok || payload.error) {
+    throw new Error(payload.error?.message ?? "cancel ai chat run failed");
   }
   return payload.data;
 }

@@ -106,7 +106,11 @@ export class PluginRuntimeProvider implements PluginRuntimePort {
       if (!ext) continue;
       const invokeLlm = factory({ pluginId: row.pluginId, getPluginRuntime: () => this });
       Object.assign(ext as PluginRuntimeExtension & { invokeHostLlm?: typeof invokeLlm }, {
-        invokeHostLlm: invokeLlm
+        invokeHostLlm: (input: Parameters<typeof invokeLlm>[0]) =>
+          invokeLlm({
+            ...input,
+            toolPolicy: "none"
+          })
       });
     }
   }

@@ -21,7 +21,8 @@ function rowsToUiMessages(
     out.push({
       id: `db:${row.id}`,
       role,
-      content: row.content
+      content: row.content,
+      parts: [{ type: "text", text: row.content }]
     });
   }
   return out;
@@ -71,7 +72,7 @@ export function createIngestExternalUserTurnForPlugin(options: {
     const tail = listChatMessagesTail(pluginId, input.sessionId, CONTEXT_TAIL);
     const messages: UiChatMessage[] = rowsToUiMessages(tail);
     const extId = `ext:${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    messages.push({ id: extId, role: "user", content: userText });
+    messages.push({ id: extId, role: "user", content: userText, parts: [{ type: "text", text: userText }] });
 
     const traceId =
       input.traceId && input.traceId.length > 0 ? `external:${input.traceId}` : `external:${pluginId}`;

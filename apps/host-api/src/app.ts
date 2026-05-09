@@ -6,8 +6,8 @@ import { fail, ok } from "./core/response.js";
 import { HostEventHub } from "./providers/host-event-hub-provider/index.js";
 import { PluginRuntimeProvider } from "./providers/plugin-runtime-provider/index.js";
 import { NotificationProvider } from "./providers/notification-provider/index.js";
-import { registerAiChatRoutes } from "./routes/ai-chat.routes.js";
 import { AiRunProvider } from "./providers/ai-run-provider/index.js";
+import { registerAiChatRoutes } from "./routes/ai-chat.routes.js";
 import { registerMcpRoutes } from "./routes/mcp.routes.js";
 import { createMcpGatewayService } from "./services/mcp-gateway/mcp-gateway.service.js";
 import { registerLlmConfigRoutes } from "./routes/llm-config.routes.js";
@@ -35,6 +35,7 @@ function resolveCorsOrigin(): boolean | string | RegExp | (string | RegExp)[] {
 
 async function initProvider(app: FastifyInstance, mcpGateway: ReturnType<typeof createMcpGatewayService>) {
   const notificationProvider = new NotificationProvider();
+  const aiRunProvider = new AiRunProvider();
   const hostEventHub = new HostEventHub(notificationProvider);
   registerSchedulerNotificationPublisher(hostEventHub.createPublishNotificationStream());
   const pluginRuntimeProvider = await PluginRuntimeProvider.create({
@@ -43,7 +44,7 @@ async function initProvider(app: FastifyInstance, mcpGateway: ReturnType<typeof 
   });
   registerPluginIngestAndHostBridge(hostEventHub, pluginRuntimeProvider, mcpGateway);
   bindPluginCatalogProvider(pluginRuntimeProvider);
-  return { notificationProvider, hostEventHub, pluginRuntimeProvider };
+  return { notificationProvider, hostEventHub, pluginRuntimeProvider, aiRunProvider };
 }
 
 export async function createApp() {
@@ -55,7 +56,7 @@ export async function createApp() {
     origin: resolveCorsOrigin(),
     credentials: true,
     methods: ["GET", "PUT", "POST", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+    allowedHeaders: ["Content-Type", "Authorization", "X-Wclaw-Plugin-Id", "X-Wclaw-Session-Id"]
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -71,12 +72,11 @@ export async function createApp() {
     return ok({ status: "ok" }, null);
   });
 
-  const { notificationProvider, hostEventHub, pluginRuntimeProvider } = await initProvider(app, mcpGateway);
-  const aiRunProvider = new AiRunProvider();
+  const { notificationProvider, hostEventHub, pluginRuntimeProvider, aiRunProvider } = await initProvider(app, mcpGateway);
 
   void registerLlmConfigRoutes(app);
   void registerMcpRoutes(app, mcpGateway);
-  void registerAiChatRoutes(app, pluginRuntimeProvider, aiRunProvider);
+  void registerAiChatRoutes(app, pluginRuntimeProvider, aiRunProvider, hostEventHub.createPublishNotificationStream());
   void registerPluginsRoutes(app);
   void registerPluginChatRoutes(app, pluginRuntimeProvider, mcpGateway);
   void registerPluginConfigRoutes(app);

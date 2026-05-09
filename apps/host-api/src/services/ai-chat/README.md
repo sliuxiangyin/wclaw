@@ -11,13 +11,12 @@
 | **`ai-chat.service.ts`** | 对外入口 `orchestrateChat`：校验宿主插件、落 user、拉会话态、**resolve → dispatch**、落 assistant、写 `chat.response.completed`。 |
 | **`../register-plugin/external-user-turn.service.ts`** | `createIngestExternalUserTurnForPlugin`：拼 `messages` + `orchestrateChat`；成功后再 **鸭子调用 `reflowChatToChannel`**（可选），然后 `notifyChatSessionUpdated`；闭包注入见 **`composition/register-plugin-ingest-and-host-bridge.ts` + `setIngestExternalUserTurn`**。 |
 | **`ai-chat.types.ts`** | 输入/输出、`ChatBranchResult`、`AiOrchestrationContext`、`ExecuteCommandPluginInput` 等类型。 |
-| **`ai-chat-resolution.ts`** | **纯判别**（无 IO）：`resolveAiOrchestrationPath` → `AiOrchestrationPath` 联合类型。 |
+| **`ai-chat-command-envelope.ts`** | **纯判别**（无 IO）：`AiChatCommandEnvelope.handler`、`parseHostCommandRoute`（长 `/command`、短 `/xxx`）；→ `AiOrchestrationPath`。 |
 | **`ai-chat-dispatch.ts`** | **唯一集中 `switch`**：`dispatchAiOrchestration(path, ctx)` 调用各分支实现。 |
-| **`ai-chat-isolated.ts`** | 隔离模式：`/close` 写回 normal；否则将全文转发为子插件命令。 |
+| **`ai-chat-isolated.ts`** | 隔离模式：`/close` 写回 normal（路由判别在 `ai-chat-command-envelope`）。 |
 | **`ai-chat-host-command.ts`** | 宿主 `/command <pluginId>…`：解析目标清单、**isolated_chat** 入隔离或 **瞬时** `executeCommandPlugin`。 |
 | **`ai-chat-runtime-default.ts`** | 普通 runtime 路径：多会话默认引导、插件内 `/` 命令、`sendPluginChat(delegatedPersistence)`、否则 LLM。 |
 | **`ai-chat-command-plugin.ts`** | `executeCommandPlugin` + `resolveCommandPluginMode`；ephemeral 带/不带 LLM。 |
-| **`ai-chat-command-envelope.ts`** | `/command` 文本解析（与插件内斜杠命令区分）。 |
 | **`ai-chat-context-window.ts`** | `extractLastUserMessage`、`buildWithContextWindow`。 |
 | **`ai-chat-events.util.ts`** | LLM 失败等事件小工具（`appendLlmFailedEvent`）。 |
 
@@ -44,10 +43,12 @@ ai-chat-isolated / ai-chat-host-command / ai-chat-runtime-default
 ## 编排流程（阅读代码顺序）
 
 1. **`orchestrateChat`** 写入本轮 **user** 行，打 `chat.request.received`。
-2. **`resolveAiOrchestrationPath(state, userMessage)`**  
-   - 若在 **isolated** 且非 `/close` → `isolated_delegate`；`/close` → `isolated_close`。  
-   - 否则若匹配 **`/command`** 且无 pluginId → `host_bad_format`；有 → `host_command`。  
-   - 否则 → `runtime_default`。
+2. **`AiChatCommandEnvelope.handler(state, userMessage, hostPlugin)`**（摘要）  
+   - 若在 **isolated**：`/close` → `isolated_close`；有斜杠命令解析命中 → `host_command`；否则 → `isolated_plain_llm`（宿主 LLM + 隔离目标 `systemPrompt` / MCP）。  
+   - **`ephemeral_no_context`**：无斜杠 → `command_plugin_usage_hint`；有斜杠 → `host_command`。  
+   - **`ephemeral_with_context` / `isolated_chat`（宿主会话）**：无斜杠 → `runtime_default`；有斜杠 → `host_command`。  
+   - **`runtime_plugin` + `forceExecuteTurn`**：无斜杠也走 `host_command`（全文作命令）。  
+   - 其余：有斜杠 → `host_command`，无斜杠 → `runtime_default`。
 3. **`dispatchAiOrchestration`** 按路径执行，返回 **新 `state`（可能已改隔离）** + **`ChatBranchResult`**。
 4. **`orchestrateChat`** 用分支结果 **写 assistant 行**（含 `sourceType` / `llmEligible` / `contextSummary`），打 `chat.response.completed`。
 
@@ -76,5 +77,5 @@ ai-chat-isolated / ai-chat-host-command / ai-chat-runtime-default
 
 ## 维护说明
 
-- 新增一条 **顶层分支**：先扩展 **`AiOrchestrationPath`** 与 **`resolveAiOrchestrationPath`**，再在 **`dispatchAiOrchestration`** 增加 `case`，避免在 `orchestrateChat` 再堆 `if/else`。  
+- 新增一条 **顶层分支**：先扩展 **`AiOrchestrationPath`** 与 **`AiChatCommandEnvelope.handler`**，再在 **`dispatchAiOrchestration`** 增加 `case`，避免在 `orchestrateChat` 再堆 `if/else`。  
 - 与消息语义相关的文档可对照仓库内 `docs/项目功能/消息流程/` 下 runtime / command_plugin 流程说明。

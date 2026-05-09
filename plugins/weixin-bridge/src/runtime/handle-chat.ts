@@ -55,8 +55,8 @@ async function handleLogin(c: ChatContext): Promise<string | PluginTurnHandleRes
     return `登录进行中：请等待当前流程结束后再试。\n二维码链接：${pending.qrCodeUrl ?? "（未返回）"}`;
   }
 
-  const emitAct = ctx.emitPluginActivity;
-  if (!emitAct) {
+  const emitDelta = ctx.emitAssistantDelta;
+  if (!emitDelta) {
     return "请使用支持流式对话的界面执行 /login（需保持连接直至扫码完成）。\n也可调用 POST /api/ai/chat 并携带 Accept: text/event-stream。";
   }
 
@@ -68,22 +68,12 @@ async function handleLogin(c: ChatContext): Promise<string | PluginTurnHandleRes
   const notifyLoginStatus = (event: QrStatusEvent): void => {
     switch (event.type) {
       case "scanned":
-        emitAct({
-          phase: "login_scanned",
-          data: { summary: "已扫码，请在微信中确认登录…" }
-        });
+        emitDelta("已扫码，请在微信中确认登录…\n");
         break;
       case "qr_refreshed": {
         const n = event.refreshCount;
         const url = typeof event.qrcodeUrl === "string" ? event.qrcodeUrl : "";
-        emitAct({
-          phase: "login_qr_refreshed",
-          data: {
-            refreshCount: event.refreshCount,
-            qrcodeUrl: event.qrcodeUrl,
-            summary: `二维码已刷新（第 ${typeof n === "number" ? n : "?"} 次），请重新扫码：\n${url}`
-          }
-        });
+        emitDelta(`二维码已刷新（第 ${typeof n === "number" ? n : "?"} 次），请重新扫码：\n${url}\n`);
         break;
       }
       default:
@@ -93,13 +83,7 @@ async function handleLogin(c: ChatContext): Promise<string | PluginTurnHandleRes
 
   try {
     const intro = "请使用微信扫码登录（连接将保持至此流程结束）";
-    emitAct({
-      phase: "login_qr",
-      data: {
-        qrcodeUrl: qrCodeUrl,
-        summary: `${intro}\n${qrCodeUrl || "（未返回二维码链接）"}`
-      }
-    });
+    emitDelta(`${intro}\n${qrCodeUrl || "（未返回二维码链接）"}\n`);
 
     const result = await waitQr(qr.sessionKey, {
       timeoutMs,

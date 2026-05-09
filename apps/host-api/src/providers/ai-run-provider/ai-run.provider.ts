@@ -1,16 +1,21 @@
-import type { ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import type { UIMessageChunk } from "ai";
 
 export type AiRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
-export type AiRunChunk = Record<string, unknown> & { type: string };
+export type AiRunChunk = UIMessageChunk;
 
 type AiRunEvent = {
   seq: number;
   chunk: AiRunChunk;
 };
 
-type AiRunState = {
+type AiRunSubscriber = {
+  onChunk: (event: AiRunEvent) => void;
+  onDone: (state: AiRunState) => void;
+};
+
+export type AiRunState = {
   runId: string;
   pluginId: string;
   sessionId: string;
@@ -19,7 +24,7 @@ type AiRunState = {
   createdAt: string;
   updatedAt: string;
   events: AiRunEvent[];
-  subscribers: Set<ServerResponse>;
+  subscribers: Set<AiRunSubscriber>;
   abortController: AbortController;
   error?: { code: string; message: string };
 };
@@ -28,8 +33,19 @@ const RUN_EVENT_BUFFER_LIMIT = 2000;
 
 export class AiRunProvider {
   private readonly runs = new Map<string, AiRunState>();
+  private readonly activeBySession = new Map<string, string>();
 
   createRun(input: { pluginId: string; sessionId: string; traceId: string }): AiRunState {
+    const key = sessionKey(input.pluginId, input.sessionId);
+    const activeRunId = this.activeBySession.get(key);
+    if (activeRunId) {
+      const active = this.runs.get(activeRunId);
+      if (active && !isTerminalStatus(active.status)) {
+        throw new Error("AI_RUN_ACTIVE");
+      }
+      this.activeBySession.delete(key);
+    }
+
     const runId = randomUUID();
     const now = new Date().toISOString();
     const state: AiRunState = {
@@ -45,6 +61,7 @@ export class AiRunProvider {
       abortController: new AbortController()
     };
     this.runs.set(runId, state);
+    this.activeBySession.set(key, runId);
     return state;
   }
 
@@ -64,6 +81,7 @@ export class AiRunProvider {
     if (!run) return;
     run.status = "completed";
     run.updatedAt = new Date().toISOString();
+    this.finishRun(run);
   }
 
   markFailed(runId: string, error: { code: string; message: string }) {
@@ -72,6 +90,7 @@ export class AiRunProvider {
     run.status = "failed";
     run.error = error;
     run.updatedAt = new Date().toISOString();
+    this.finishRun(run);
   }
 
   markCancelled(runId: string) {
@@ -79,6 +98,7 @@ export class AiRunProvider {
     if (!run) return;
     run.status = "cancelled";
     run.updatedAt = new Date().toISOString();
+    this.finishRun(run);
   }
 
   appendChunk(runId: string, chunk: AiRunChunk) {
@@ -91,44 +111,63 @@ export class AiRunProvider {
     }
     run.updatedAt = new Date().toISOString();
     for (const sub of run.subscribers) {
-      sub.write(`event: chunk\n`);
-      sub.write(`data: ${JSON.stringify({ seq, chunk })}\n\n`);
+      sub.onChunk({ seq, chunk });
     }
   }
 
-  subscribe(runId: string, res: ServerResponse, lastSeq: number) {
+  subscribe(runId: string, input: AiRunSubscriber & { lastSeq?: number }) {
     const run = this.runs.get(runId);
     if (!run) return false;
+    const lastSeq = input.lastSeq ?? 0;
     for (const ev of run.events) {
       if (ev.seq <= lastSeq) continue;
-      res.write(`event: chunk\n`);
-      res.write(`data: ${JSON.stringify({ seq: ev.seq, chunk: ev.chunk })}\n\n`);
+      input.onChunk(ev);
     }
-    if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
-      res.end();
+    if (isTerminalStatus(run.status)) {
+      input.onDone(run);
       return true;
     }
-    run.subscribers.add(res);
+    run.subscribers.add(input);
     return true;
   }
 
-  unsubscribe(runId: string, res: ServerResponse) {
+  unsubscribe(runId: string, subscriber: AiRunSubscriber) {
     const run = this.runs.get(runId);
     if (!run) return;
-    run.subscribers.delete(res);
+    run.subscribers.delete(subscriber);
   }
 
   cancel(runId: string): boolean {
     const run = this.runs.get(runId);
     if (!run) return false;
-    if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") return true;
+    if (isTerminalStatus(run.status)) return true;
     run.abortController.abort("cancelled-by-user");
-    run.status = "cancelled";
-    run.updatedAt = new Date().toISOString();
     return true;
+  }
+
+  cancelSession(pluginId: string, sessionId: string): boolean {
+    const runId = this.activeBySession.get(sessionKey(pluginId, sessionId));
+    return runId ? this.cancel(runId) : false;
   }
 
   getAbortSignal(runId: string): AbortSignal | null {
     return this.runs.get(runId)?.abortController.signal ?? null;
   }
+
+  private finishRun(run: AiRunState) {
+    this.activeBySession.delete(sessionKey(run.pluginId, run.sessionId));
+    const subscribers = [...run.subscribers];
+    run.subscribers.clear();
+    for (const sub of subscribers) {
+      sub.onDone(run);
+    }
+  }
+}
+
+function sessionKey(pluginId: string, sessionId: string): string {
+  return `${pluginId}\0${sessionId}`;
+}
+
+function isTerminalStatus(status: AiRunStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }

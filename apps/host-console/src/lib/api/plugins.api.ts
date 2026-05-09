@@ -1,24 +1,5 @@
 import { apiGet } from "./client";
 
-/** 与宿主 `plugin-manifest.types.ts` / 清单 `guide` 字段一致（所有 kind 共用形状）。 */
-export type PluginGuideSuggestion = {
-  prompt: string;
-  text?: string;
-};
-
-export type PluginGuideMultiSession = {
-  defaultSessionWelcome?: string;
-  sessionWelcome?: string;
-  defaultSessionSuggestions?: PluginGuideSuggestion[];
-  sessionSuggestions?: PluginGuideSuggestion[];
-};
-
-export type PluginGuide = {
-  welcome?: string;
-  suggestions?: PluginGuideSuggestion[];
-  multiSession?: PluginGuideMultiSession;
-};
-
 export type PluginListItem = {
   pluginId: string;
   status: "valid" | "invalid";
@@ -36,7 +17,6 @@ export type PluginListItem = {
     sessionProvider?: { mode?: string; [k: string]: unknown };
     configSchema?: Record<string, unknown>;
     defaultConfig?: Record<string, unknown>;
-    guide?: PluginGuide;
   };
   errors?: string[];
 };

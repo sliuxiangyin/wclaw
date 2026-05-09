@@ -18,7 +18,7 @@ export async function decorateSessions(pluginId: string): Promise<PluginSessionR
       title: "默认会话",
       ui: {
         subtitle: "登录与引导",
-        badges: ["wechat", "guide"],
+        badges: ["wechat", "onboarding"],
         welcome: "Hello there!\nHow can I help you today?",
         suggestions: [
           { prompt: "/login", text: "开始扫码登录" },

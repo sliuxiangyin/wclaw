@@ -2,7 +2,7 @@ import { appendChatEvent } from "../../repositories/chat-event.repository.js";
 import { plugin, type PluginManifest } from "../plugin-catalog/plugin-catalog.service.js";
 import { runPluginCommand } from "../plugin-chat/plugin-chat.service.js";
 import { generateWithConfiguredLlm, streamWithConfiguredLlm } from "../llm/llm-runtime.service.js";
-import { buildWithContextWindow } from "./ai-chat-context-window.js";
+import { buildWithContextWindow, sanitizeMessagesForLlmWindow } from "./ai-chat-context-window.js";
 import { appendLlmFailedEvent } from "./ai-chat-events.util.js";
 import type { ChatBranchResult, ExecuteCommandPluginInput } from "./ai-chat.types.js";
 
@@ -52,16 +52,27 @@ export async function executeCommandPlugin(input: ExecuteCommandPluginInput): Pr
   });
 
   if (mode === "ephemeral_with_context") {
-    const llmMessages = buildWithContextWindow(messages, 12);
-    const pluginPrefix = `[plugin:${pluginId}] ${commandResult.output}\n`;
+    if (!commandResult.continue) {
+      return {
+        reply: commandResult.output,
+        sourceType: "plugin" as const,
+        sourcePluginId: pluginId,
+        llmEligible: true,
+        contextSummary: summary,
+        skipSseFinalReplyChunks: false
+      };
+    }
+
+    const llmMessages = sanitizeMessagesForLlmWindow(buildWithContextWindow(messages, 12));
     const pluginSystemPrompt = target.manifest.systemPrompt;
+    const pluginUserLine =
+      `[plugin:${pluginId} 执行结果 — 以下内容供你组织回答，勿把原文重复粘贴给用户]\n\n${commandResult.output}`;
     const baseMessages = [
-      ...(pluginSystemPrompt ? [{ role: "system" as const, content: pluginSystemPrompt }] : []),
+      ...(typeof pluginSystemPrompt === "string" && pluginSystemPrompt.trim().length > 0
+        ? [{ role: "system" as const, content: pluginSystemPrompt.trim() }]
+        : []),
       ...llmMessages,
-      {
-        role: "assistant" as const,
-        content: `command result: ${commandResult.output}`
-      }
+      { role: "user" as const, content: pluginUserLine }
     ];
     appendChatEvent({
       traceId,
@@ -80,7 +91,6 @@ export async function executeCommandPlugin(input: ExecuteCommandPluginInput): Pr
     try {
       stream?.onStart?.({ sourceType: "plugin", sourcePluginId: pluginId });
       if (stream?.onTextDelta) {
-        stream.onTextDelta(pluginPrefix);
         llm = await streamWithConfiguredLlm({
           modelOverride: model,
           messages: baseMessages,
@@ -107,7 +117,7 @@ export async function executeCommandPlugin(input: ExecuteCommandPluginInput): Pr
       throw error;
     }
     return {
-      reply: `${pluginPrefix}${llm.text}`,
+      reply: llm.text,
       sourceType: "plugin" as const,
       sourcePluginId: pluginId,
       llmEligible: true,

@@ -45,7 +45,8 @@ export function createInvokeHostLlmForPlugin(
     try {
       const result = await generateWithConfiguredLlm({
         messages: input.messages,
-        modelOverride: input.model
+        modelOverride: input.model,
+        toolPolicy: input.toolPolicy
       });
       const cfg = getLlmConfig();
       let resolvedModel: string | undefined;

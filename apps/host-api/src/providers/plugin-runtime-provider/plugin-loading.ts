@@ -125,12 +125,12 @@ async function scanDiskCatalog(): Promise<{ rows: ManifestScanRow[] }> {
           commandMode: json.commandMode as PluginManifest["commandMode"],
           version: String(json.version),
           description: String(json.description),
+          systemPrompt: String(json.systemPrompt),
           entry: String(json.entry ?? ""),
           mcp: (json.mcp as PluginManifest["mcp"] | undefined) ?? undefined,
           sessionProvider: (json.sessionProvider as Record<string, unknown> | undefined) ?? undefined,
           configSchema: (json.configSchema as Record<string, unknown> | undefined) ?? undefined,
-          defaultConfig: (json.defaultConfig as Record<string, unknown> | undefined) ?? undefined,
-          guide: json.guide as PluginManifest["guide"] | undefined
+          defaultConfig: (json.defaultConfig as Record<string, unknown> | undefined) ?? undefined
         }
       });
     } catch {

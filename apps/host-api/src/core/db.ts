@@ -25,42 +25,34 @@ db.exec(`
 `);
 
 db.exec(`
-  CREATE TABLE IF NOT EXISTS plugin_chat_messages (
+  CREATE TABLE IF NOT EXISTS plugin_chat_ui_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     plugin_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
     trace_id TEXT,
     role TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    ui_message_json TEXT NOT NULL,
+    content_plain TEXT NOT NULL DEFAULT '',
+    source_type TEXT DEFAULT 'runtime',
+    source_plugin_id TEXT,
+    llm_eligible INTEGER DEFAULT 1,
+    context_summary TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(plugin_id, session_id, message_id)
   );
 `);
-try {
-  db.exec(`ALTER TABLE plugin_chat_messages ADD COLUMN trace_id TEXT;`);
-} catch {
-  // no-op: column already exists
-}
 
-try {
-  db.exec(`ALTER TABLE plugin_chat_messages ADD COLUMN source_type TEXT DEFAULT 'runtime';`);
-} catch {
-  // no-op: column already exists
-}
-try {
-  db.exec(`ALTER TABLE plugin_chat_messages ADD COLUMN source_plugin_id TEXT;`);
-} catch {
-  // no-op: column already exists
-}
-try {
-  db.exec(`ALTER TABLE plugin_chat_messages ADD COLUMN llm_eligible INTEGER DEFAULT 1;`);
-} catch {
-  // no-op: column already exists
-}
-try {
-  db.exec(`ALTER TABLE plugin_chat_messages ADD COLUMN context_summary TEXT;`);
-} catch {
-  // no-op: column already exists
-}
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_plugin_chat_ui_messages_session
+  ON plugin_chat_ui_messages(plugin_id, session_id, id);
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_plugin_chat_ui_messages_trace
+  ON plugin_chat_ui_messages(plugin_id, session_id, trace_id);
+`);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -91,34 +83,6 @@ db.exec(`
     payload_json TEXT NOT NULL,
     created_at TEXT NOT NULL
   );
-`);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS plugin_chat_activity (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    plugin_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    trace_id TEXT NOT NULL,
-    seq INTEGER NOT NULL,
-    phase TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  );
-`);
-
-db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_plugin_chat_activity_session
-  ON plugin_chat_activity(plugin_id, session_id);
-`);
-
-db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_plugin_chat_activity_trace
-  ON plugin_chat_activity(trace_id);
-`);
-
-db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_plugin_chat_messages_session_trace
-  ON plugin_chat_messages(plugin_id, session_id, trace_id);
 `);
 
 db.exec(`

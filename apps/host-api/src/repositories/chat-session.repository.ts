@@ -35,6 +35,10 @@ const upsertStmt = db.prepare(`
     updated_at = excluded.updated_at
 `);
 
+const deleteStmt = db.prepare(
+  `DELETE FROM chat_sessions WHERE plugin_id = ? AND session_id = ?`
+);
+
 function normalizeMcpToolForbidden(input: unknown): McpToolForbidden {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return EMPTY_MCP_TOOL_FORBIDDEN;
@@ -111,4 +115,10 @@ export function saveChatSessionState(state: Omit<ChatSessionState, "updatedAt">)
     mcp_tool_forbidden: JSON.stringify(forbidden),
     updated_at: new Date().toISOString()
   });
+}
+
+/** 删除某插件某会话会话态（mode / isolated / mcpToolForbidden）；返回是否删除 */
+export function deleteChatSessionState(pluginId: string, sessionId: string): boolean {
+  const r = deleteStmt.run(pluginId, sessionId);
+  return typeof r.changes === "number" ? r.changes > 0 : false;
 }

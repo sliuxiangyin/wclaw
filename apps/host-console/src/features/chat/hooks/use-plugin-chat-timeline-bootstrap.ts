@@ -1,18 +1,15 @@
 import type { UIMessage } from "ai";
 import { useCallback, useEffect, useState } from "react";
-import type { PluginActivityPayload } from "../../../lib/api/ai-chat.api";
 import { getPluginChatHistoryTimeline } from "../../../lib/api/plugin-chat.api";
 import {
   CHAT_SESSION_UPDATED_EVENT,
   type ChatSessionUpdatedDetail
 } from "../lib/chat-host-events";
-import { timelineToUiBootstrap } from "../lib/timeline-to-ui-messages";
 
 export type PluginChatBootstrapState = {
   loading: boolean;
   error: string | null;
   messages: UIMessage[];
-  persistedActivitiesByAssistantMessageId: Record<string, PluginActivityPayload[]>;
 };
 
 /**
@@ -22,8 +19,7 @@ export function usePluginChatTimelineBootstrap(pluginId: string, sessionId: stri
   const [state, setState] = useState<PluginChatBootstrapState>({
     loading: true,
     error: null,
-    messages: [],
-    persistedActivitiesByAssistantMessageId: {}
+    messages: []
   });
 
   const reload = useCallback(async () => {
@@ -31,27 +27,23 @@ export function usePluginChatTimelineBootstrap(pluginId: string, sessionId: stri
       setState({
         loading: false,
         error: null,
-        messages: [],
-        persistedActivitiesByAssistantMessageId: {}
+        messages: []
       });
       return;
     }
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const data = await getPluginChatHistoryTimeline(pluginId, sessionId, 200);
-      const boot = timelineToUiBootstrap(data.timeline);
       setState({
         loading: false,
         error: null,
-        messages: boot.messages,
-        persistedActivitiesByAssistantMessageId: boot.persistedActivitiesByAssistantMessageId
+        messages: data.messages
       });
     } catch (err) {
       setState({
         loading: false,
         error: err instanceof Error ? err.message : "加载历史失败",
-        messages: [],
-        persistedActivitiesByAssistantMessageId: {}
+        messages: []
       });
     }
   }, [pluginId, sessionId]);
@@ -61,8 +53,7 @@ export function usePluginChatTimelineBootstrap(pluginId: string, sessionId: stri
       setState({
         loading: false,
         error: null,
-        messages: [],
-        persistedActivitiesByAssistantMessageId: {}
+        messages: []
       });
       return;
     }
@@ -70,27 +61,23 @@ export function usePluginChatTimelineBootstrap(pluginId: string, sessionId: stri
     setState({
       loading: true,
       error: null,
-      messages: [],
-      persistedActivitiesByAssistantMessageId: {}
+      messages: []
     });
     void (async () => {
       try {
         const data = await getPluginChatHistoryTimeline(pluginId, sessionId, 200);
         if (cancel) return;
-        const boot = timelineToUiBootstrap(data.timeline);
         setState({
           loading: false,
           error: null,
-          messages: boot.messages,
-          persistedActivitiesByAssistantMessageId: boot.persistedActivitiesByAssistantMessageId
+          messages: data.messages
         });
       } catch (err) {
         if (cancel) return;
         setState({
           loading: false,
           error: err instanceof Error ? err.message : "加载历史失败",
-          messages: [],
-          persistedActivitiesByAssistantMessageId: {}
+          messages: []
         });
       }
     })();

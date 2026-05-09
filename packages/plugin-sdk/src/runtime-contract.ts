@@ -35,7 +35,10 @@ export type PluginChatPersistRow = {
 export type PluginTurnHandleResult = {
   /** 本轮文本输出（必填） */
   text: string;
-  /** false=本轮直接返回给 chat；true=允许宿主继续后续流程（如 LLM） */
+  /**
+   * `true`：`text` 作为中间结果；在 `ephemeral_with_context` 等路径下由宿主转为 LLM 的 **user** 侧输入，不再单独流式输出为最终助手正文，再接 LLM 回复。
+   * `false` 或省略：本轮 **`text` 即对用户可见的最终输出**，宿主不再接后续 LLM（`toTurnResult` 默认与此一致）。
+   */
   continue?: boolean;
   /** 可选：跨会话追加落库消息 */
   persist?: PluginChatPersistRow[];
@@ -61,11 +64,6 @@ export type PluginTurnContext = {
     args: string[];
   };
   emitAssistantDelta?: (delta: string) => void;
-  /** `data.summary`：可选，供宿主控制台展示整段说明（多行可用 `\n`） */
-  emitPluginActivity?: (payload: {
-    phase: string;
-    data?: Record<string, unknown> & { summary?: string };
-  }) => void;
 };
 
 export type PluginScheduledTask = {
@@ -149,6 +147,8 @@ export type HostLlmInvokeInput = {
   messages: HostLlmMessage[];
   model?: string;
   traceId?: string;
+  /** 工具策略：`none` 表示本次补全禁止工具调用（宿主侧执行约束）。 */
+  toolPolicy?: "auto" | "none";
 };
 
 export type HostLlmInvokeResult =

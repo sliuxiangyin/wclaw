@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import Ai05 from "@/components/ai-05";
-import type { PluginActivityPayload } from "@/lib/api/ai-chat.api";
 
 export function PluginChatPage() {
   const { pluginId } = useParams<{ pluginId: string }>();
@@ -90,7 +89,6 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
     usePluginChat(plugin);
   const chatBootstrap = usePluginChatTimelineBootstrap(plugin.pluginId, sessionId);
   const [chatSurfaceKey, setChatSurfaceKey] = useState(0);
-  const [pluginActivities, setPluginActivities] = useState<PluginActivityPayload[]>([]);
   const [events, setEvents] = useState<PluginChatEventItem[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [eventsError, setEventsError] = useState<string | null>(null);
@@ -131,10 +129,6 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
       mounted = false;
     };
   }, [plugin.pluginId, sessionId, hasActiveSession]);
-
-  useEffect(() => {
-    setPluginActivities([]);
-  }, [sessionId]);
 
   return (
     <main className="p-4 md:p-6">
@@ -291,16 +285,9 @@ function PluginChatContent({ plugin }: PluginChatContentProps) {
                     sessionId={sessionId}
                     session={currentSession}
                     initialMessages={chatBootstrap.messages}
-                    persistedActivitiesByAssistantMessageId={
-                      chatBootstrap.persistedActivitiesByAssistantMessageId
-                    }
-                    pluginActivityFeed={pluginActivities}
-                    onPluginActivity={(ev) => setPluginActivities((prev) => [...prev, ev])}
-                    onClearPluginActivityFeed={() => setPluginActivities([])}
                     onSessionsMaybeChanged={() => void refreshSessions()}
                     onClearChatHistory={async () => {
                       await chatBootstrap.reload();
-                      setPluginActivities([]);
                       setChatSurfaceKey((k) => k + 1);
                       await refreshSessions();
                     }}

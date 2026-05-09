@@ -5,15 +5,18 @@ import type { PluginManifest } from "../plugin-catalog/plugin-catalog.service.js
 import { jsonSchema, type ToolSet } from "ai";
 import { generateWithConfiguredLlm, streamWithConfiguredLlm } from "../llm/llm-runtime.service.js";
 import { createMcpGatewayService } from "../mcp-gateway/mcp-gateway.service.js";
-import { buildWithContextWindow } from "./ai-chat-context-window.js";
+import { buildWithContextWindow, sanitizeMessagesForLlmWindow } from "./ai-chat-context-window.js";
 import { appendLlmFailedEvent } from "./ai-chat-events.util.js";
 import type { AiChatStreamCallbacks, ChatBranchResult, UiChatMessage } from "./ai-chat.types.js";
 
+export type ExecuteRuntimeDefaultOptions = {
+  /** 写入 `chat_events` 的 path，便于区分「隔离内纯 LLM」等 */
+  telemetryPath?: string;
+};
+
 /**
- * 非宿主 /command、非隔离内：runtime_plugin 默认路径。
- * — 多会话默认引导：只做插件运行时（不写库由 orchestrate 统一写）
- * — 插件内斜杠命令：同上
- * — 否则：走宿主配置 LLM
+ * 非宿主 /command、非隔离内的默认路径：走宿主配置 LLM。
+ * `command_plugin` 且声明 `systemPrompt` 时，在窗口消息前注入一条 system（与 `executeCommandPlugin` 带上下文分支一致）。
  */
 export async function executeRuntimeDefault(
   pluginRuntime: PluginRuntimePort,
@@ -26,11 +29,59 @@ export async function executeRuntimeDefault(
   model?: string,
   traceId?: string | null,
   abortSignal?: AbortSignal,
-  stream?: AiChatStreamCallbacks
+  stream?: AiChatStreamCallbacks,
+  options?: ExecuteRuntimeDefaultOptions
 ): Promise<ChatBranchResult> {
-  // 其余场景：runtime_default 路径下改由宿主 LLM 回答。
-  const llmMessages = buildWithContextWindow(messages, 20);
+  const telemetryPath = options?.telemetryPath ?? "runtime_default_llm";
+  const windowed = sanitizeMessagesForLlmWindow(buildWithContextWindow(messages, 20));
+  const pluginSystem =
+    manifest.kind === "command_plugin" &&
+    typeof manifest.systemPrompt === "string" &&
+    manifest.systemPrompt.trim().length > 0
+      ? manifest.systemPrompt.trim()
+      : null;
+  type LlmLine = { role: "system" | "user" | "assistant"; content: string };
+  const llmMessages: LlmLine[] = pluginSystem
+    ? [{ role: "system", content: pluginSystem }, ...(windowed as LlmLine[])]
+    : (windowed as LlmLine[]);
+
+  if (manifest.kind === "command_plugin") {
+    const spRaw = typeof manifest.systemPrompt === "string" ? manifest.systemPrompt.trim() : "";
+    const detail = spRaw.length > 0;
+    const preview = detail ? spRaw.slice(0, 200) : null;
+    console.info("[ai-chat] systemPrompt (runtime_default / isolated_plain_llm)", {
+      telemetryPath,
+      sessionPluginId: pluginId,
+      manifestId: manifest.id,
+      commandMode: manifest.commandMode ?? null,
+      appliedToLlm: Boolean(pluginSystem),
+      reasonIfSkipped: pluginSystem
+        ? null
+        : !detail
+          ? "manifest.systemPrompt 缺失或为空"
+          : "内部状态异常",
+      charLength: pluginSystem?.length ?? 0,
+      previewSuffix: detail && spRaw.length > 200 ? "…" : "",
+      preview
+    });
+  }
+
   const { tools: llmTools, stats: toolStats } = buildRuntimeDefaultLlmTools(manifest, mcpToolForbidden, sessionId, traceId);
+
+  let messagesForLlm: LlmLine[] = llmMessages;
+  if (Object.keys(llmTools).length > 0) {
+    const mcpHint =
+      "（宿主编排：需要浏览器或网页实时信息时，必须调用已注册的 MCP 工具；历史中可能仍有被裁掉的旧工具摘要，不能代替新的工具调用；禁止用虚构的 [tool:…] 行冒充工具输出。）";
+    if (messagesForLlm.length > 0 && messagesForLlm[0]!.role === "system") {
+      messagesForLlm = [
+        { role: "system", content: `${messagesForLlm[0]!.content}\n\n${mcpHint}` },
+        ...messagesForLlm.slice(1)
+      ];
+    } else {
+      messagesForLlm = [{ role: "system", content: mcpHint }, ...messagesForLlm];
+    }
+  }
+
   appendChatEvent({
     traceId,
     pluginId,
@@ -38,8 +89,8 @@ export async function executeRuntimeDefault(
     type: "chat.llm.called",
     source: "llm",
     payload: {
-      path: "runtime_default_llm",
-      messageCount: llmMessages.length,
+      path: telemetryPath,
+      messageCount: messagesForLlm.length,
       model: model ?? null,
       toolAllowedCount: toolStats.allowedCount,
       toolCandidateCount: toolStats.candidateCount,
@@ -55,7 +106,7 @@ export async function executeRuntimeDefault(
       skipSseFinalReplyChunks = true;
       llm = await streamWithConfiguredLlm({
         modelOverride: model,
-        messages: llmMessages,
+        messages: messagesForLlm,
         onTextDelta: stream.onTextDelta,
         onChunk: stream.onLlmChunk,
         tools: llmTools,
@@ -64,7 +115,7 @@ export async function executeRuntimeDefault(
     } else {
       llm = await generateWithConfiguredLlm({
         modelOverride: model,
-        messages: llmMessages,
+        messages: messagesForLlm,
         tools: llmTools,
         abortSignal
       });
@@ -74,7 +125,7 @@ export async function executeRuntimeDefault(
       traceId,
       pluginId,
       sessionId,
-      path: "runtime_default_llm",
+      path: telemetryPath,
       model,
       error
     });
@@ -90,7 +141,7 @@ export async function executeRuntimeDefault(
   };
 }
 
-function buildRuntimeDefaultLlmTools(
+export function buildRuntimeDefaultLlmTools(
   manifest: PluginManifest,
   mcpToolForbidden: McpToolForbidden,
   sessionId: string,

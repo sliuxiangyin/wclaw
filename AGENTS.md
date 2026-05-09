@@ -14,7 +14,7 @@
 - **编排租约（内存版）**：`POST /api/orchestration/lease/grant`、`POST /api/orchestration/lease/revoke`（已注册路由）
 - 插件运行时扩展：入口 **`export default class`**；启动时 **`createPluginRuntimeProvider`** 预加载 **`Map<pluginId, instance>`**，构造注入 **`{ pluginId, publish }`**（`publish` 为 Hub 窄接口）；Chat / Scheduler / AI 编排经 **`PluginRuntimePort`** 取实例并调 **`executeTurn` / `getScheduledTasks` / `runScheduledTask`** 等（类型见 **`@wclaw/plugin-sdk`**）；**`services` 禁止值导入 `providers`**
 - 宿主前端管理台（`host-console`）：插件 Grid（状态/模式）、配置表单、多会话 Chat、LLM 设置；Chat 与欢迎文案按 **`kind` + `sessionProvider`** 协议驱动，**禁止** `pluginId` 特判（`lint:arch`）
-- 现有插件（`plugins/`）：`weixin-bridge`（`runtime_extension`）与 `linux-do-fetch`（`command_plugin`）。其中 `weixin-bridge`：`runtime.mjs` 为 `export default class`；内嵌 `openclaw-weixin`（需在其子目录 `npm run build` 生成 `dist`）；真实扫码登录；`/login` 在同一次 SSE 内 `await waitQr`，进度经 **`emitPluginActivity`**；跨会话欢迎语经 **`handleChat` 返回 `persist`** 由宿主统一落库；收件拉取由调度任务 **`poll-inbox`** 单次执行；默认会话仅登录引导，账号会话走正常收发
+- 现有插件（`plugins/`）：`weixin-bridge`（`runtime_extension`）与 `linux-do-fetch`（`command_plugin`）。其中 `weixin-bridge`：`runtime.mjs` 为 `export default class`；内嵌 `openclaw-weixin`（需在其子目录 `npm run build` 生成 `dist`）；真实扫码登录；`/login` 在同一次 SSE 内 `await waitQr`，进度经 **`emitAssistantDelta`** 写入助手正文流；跨会话欢迎语经 **`handleChat` 返回 `persist`** 由宿主统一落库；收件拉取由调度任务 **`poll-inbox`** 单次执行；默认会话仅登录引导，账号会话走正常收发
 
 项目仍处于早期活跃开发阶段，部分蓝图中的能力（如 **MCP Gateway**、**Chat SSE**、统一可观测性、调度 **`safe_mode` 全链路**）尚未完整落地。
 
@@ -150,7 +150,7 @@ routes → controllers → services → repositories
 
 - **宿主经 `PluginRuntimePort.get` 调用插件 `default` 类实例方法**：**返回值 / 异常**不经 Hub；**不调** Hub 替代同步返回。
 - **`ctx.publish`（唯一允许的 ctx 扩展）**：仅可增加可选 **`publish?`**，由宿主注入闭包指向 **`HostEventHub` 实例的 `publish`**（实现位于 `providers/host-event-hub-provider/`）；**禁止**在同一段 ctx 上再叠其它 HPC API（详见设计文档 §0.1.1、§1.3）。
-- **`emitPluginActivity` + `POST /api/ai/chat` 的 SSE**：**独立通道**；**不要求**并进常驻 Notification SSE；与 **`ctx.publish`/Hub** 职责分离。
+- **助手流式正文**（`emitAssistantDelta` → `text-delta`）与 **`ctx.publish`/Hub** 职责分离；**不要求**并进常驻 Notification SSE。
 - **Hub**：统一 **`publish`**；**`HOST_EVENT_TOPICS`**（如 Notification、Chat）；**多 topic** 一次调用由 Hub 逐 topic 分发；**`publishToNotificationStream`** 固定 Notification topic。
 - **Hub 与 Provider**：**`HostEventHub`**（class，位于 `providers/host-event-hub-provider/`）提供 `registerProvider` / `publish`；**`new HostEventHub(notificationProvider)`** 内部自动挂载 Notification Bridge；**`NotificationProvider`** 在 `providers/notification-provider/`（见 **`docs/项目功能/宿主插件通信总线/host-event-hub_providers_设计.md`**）。
 - 插件**禁止** import 宿主 Hub、`NotificationProvider` 实现或 Notification 路由。
@@ -185,7 +185,8 @@ routes → controllers → services → repositories
 2. 读取每个目录中的 `plugin.json`，按 `docs/项目功能/插件插件配置.md` 与宿主校验逻辑进行 JSON Schema + 语义校验。
 3. 启动时在组合根对 **`plugin.json` → `entry`** 执行 **`import()` + `new DefaultClass({ pluginId, publish })`**（失败插件跳过并打日志）；**`runtime_extension`** 入口须 **`export default class`**，宿主对实例调用 **`executeTurn` / `decorateSessions` / `getScheduledTasks` / `runScheduledTask` / `clearSession` / `executeCompleted`** 等可选方法（与 **`@wclaw/plugin-sdk` 的 `PluginRuntimeExtension`** 对齐）。
 4. 实例方法语义（与旧命名导出等价）：
-   - **`handleChat(ctx)`** —— 处理聊天消息；可返回 **`string` 或 `{ reply, persist? }`**；流式进度用 **`emitPluginActivity` / `emitAssistantDelta`**；**`ctx` 不含 `pluginId` / `publish`**
+   - **`executeTurn` 的 `PluginTurnHandleResult`**（`text` / **`continue` / `persist`**）：**与 `kind` 无关、全插件通用**，宿主与 `toTurnResult` 默认值一致；细则见 **`docs/项目功能/插件/插件.md`**「executeTurn 返回协议」。
+   - **`handleChat(ctx)`** —— 处理聊天消息；可返回 **`string` 或 `{ reply, persist? }`**；流式进度用 **`emitAssistantDelta`**；**`ctx` 不含 `pluginId` / `publish`**
    - **`decorateSessions()`** —— 丰富会话列表展示（无参）
    - **`executeCommand(ctx)`** —— 命令执行（若 `capabilities.command`）；**`ctx` 不含 `pluginId`**
    - **`getScheduledTasks()`** —— 返回调度任务定义

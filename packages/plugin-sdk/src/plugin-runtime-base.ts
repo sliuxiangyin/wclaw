@@ -148,28 +148,8 @@ export abstract class BasePluginRuntime {
     this.deps.publish(input);
   }
 
-  protected emitPluginActivity(
-    ctx: PluginTurnContext,
-    payload: { phase: string; data?: Record<string, unknown> }
-  ): void {
-    ctx.emitPluginActivity?.(payload);
-  }
-
   protected emitAssistantDelta(ctx: PluginTurnContext, delta: string): void {
     ctx.emitAssistantDelta?.(delta);
-  }
-
-  protected createActivityEmitter(ctx: PluginTurnContext): (phase: string, data?: Record<string, unknown>) => void {
-    return (phase, data) => {
-      if (typeof ctx.emitPluginActivity !== "function") return;
-      ctx.emitPluginActivity({
-        phase,
-        data: {
-          ...(data || {}),
-          summary: String(data?.summary || "")
-        }
-      });
-    };
   }
 
   private async callMcp(input: HostMcpInvokeInput): Promise<Extract<HostMcpInvokeResult, { ok: true }>> {

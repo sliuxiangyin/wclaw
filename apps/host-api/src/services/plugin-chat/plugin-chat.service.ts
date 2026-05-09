@@ -3,6 +3,8 @@ import {
   deleteAllChatMessagesForSession,
   listChatMessages
 } from "../../repositories/plugin-chat.repository.js";
+import { deleteChatEventsBySession } from "../../repositories/chat-event.repository.js";
+import { deleteChatSessionState } from "../../repositories/chat-session.repository.js";
 import { getPluginConfig } from "../../repositories/plugin-config.repository.js";
 import type { PluginRuntimeExtension, PluginTurnHandleResult } from "@wclaw/plugin-sdk";
 import type { PluginRuntimePort } from "../../core/plugin-runtime.port.js";
@@ -20,7 +22,6 @@ type SendChatInput = {
   manifest: PluginManifest;
   stream?: {
     onTextDelta?: (delta: string) => void;
-    onPluginActivity?: (payload: { phase: string; data?: Record<string, unknown> }) => void;
   };
   /**
    * 为 true 时不写入本条 user / 本轮 assistant reply（由 `orchestrateChat` 统一落库）；
@@ -41,24 +42,26 @@ export async function callExecuteTurn(input: SendChatInput) {
   const runtime = row?.object as PluginRuntimeExtension | undefined;
   let reply: string;
   let continueFlow = false;
+  /** `continue===true` 时本轮 `text` 不写入最终 assistant 行（交由后续编排或仅作中间结果） */
+  let skipFinalAssistantPersist = false;
 
   // 运行时存在 executeTurn 时，统一走插件实例方法（保留 this 绑定）。
   // ai-chat-runtime-default 会在“default 会话”或“/命令”场景进入这里。
   if (typeof runtime?.executeTurn === "function") {
     const slashArgv = parseSlashArgv(message);
-    const raw:PluginTurnHandleResult = await Promise.resolve(
+    const raw = (await Promise.resolve(
       runtime.executeTurn({
         sessionId,
         message,
         config,
         ...(slashArgv ? { argv: slashArgv } : {}),
-        emitAssistantDelta: stream?.onTextDelta,
-        emitPluginActivity: stream?.onPluginActivity
+        emitAssistantDelta: stream?.onTextDelta
       })
-    );
+    )) as PluginTurnHandleResult;
     const parsed = normalizeHandleChatResult(pluginId, raw);
     reply = raw.text;
     continueFlow = parsed.continue;
+    skipFinalAssistantPersist = parsed.continue;
     for (const row of parsed.persist) {
       if (shouldPersist(row.sessionId)) {
         appendChatMessage(pluginId, row.sessionId, row.role, row.content);
@@ -68,7 +71,7 @@ export async function callExecuteTurn(input: SendChatInput) {
     reply = buildDefaultReply(pluginId, message);
   }
 
-  if (!delegatedPersistence && shouldPersist(sessionId)) {
+  if (!delegatedPersistence && shouldPersist(sessionId) && !skipFinalAssistantPersist) {
     appendChatMessage(pluginId, sessionId, "assistant", reply);
   }
   return {
@@ -99,7 +102,6 @@ export async function runPluginCommand(
   sessionIdForTurn: string = `${pluginId}:default`,
   stream?: {
     onTextDelta?: (delta: string) => void;
-    onPluginActivity?: (payload: { phase: string; data?: Record<string, unknown> }) => void;
   }
 ) {
   const config = getPluginConfig(pluginId);
@@ -115,22 +117,37 @@ export async function runPluginCommand(
         message: command,
         config,
         argv: { command: cmd, args },
-        emitAssistantDelta: stream?.onTextDelta,
-        emitPluginActivity: stream?.onPluginActivity
+        emitAssistantDelta: stream?.onTextDelta
       })
     );
+    const parsed = parseExecuteTurnPayload(output);
     return {
       pluginId,
       command,
-      output: turnHandleResultToString(output)
+      output: parsed.text,
+      continue: parsed.continue
     };
   }
 
   return {
     pluginId,
     command,
-    output: `command accepted: ${command}`
+    output: `command accepted: ${command}`,
+    continue: false
   };
+}
+
+function parseExecuteTurnPayload(raw: unknown): { text: string; continue: boolean } {
+  if (
+    raw &&
+    typeof raw === "object" &&
+    !Array.isArray(raw) &&
+    typeof (raw as PluginTurnHandleResult).text === "string"
+  ) {
+    const r = raw as PluginTurnHandleResult;
+    return { text: r.text, continue: r.continue === true };
+  }
+  return { text: turnHandleResultToString(raw), continue: false };
 }
 
 function parseSlashArgv(message: string): { command: string; args: string[] } | null {
@@ -161,7 +178,16 @@ export async function clearPluginChatMessages(
     await Promise.resolve(runtime.clearSession({ sessionId, config }));
   }
   const deleted = deleteAllChatMessagesForSession(pluginId, sessionId);
-  return { pluginId, sessionId, deleted };
+  const deletedEvents = deleteChatEventsBySession(pluginId, sessionId);
+  const deletedSessionState = deleteChatSessionState(pluginId, sessionId);
+  return {
+    pluginId,
+    sessionId,
+    deleted,
+    deletedActivities: 0,
+    deletedEvents,
+    deletedSessionState
+  };
 }
 
 export async function getPluginSessions(
@@ -177,20 +203,21 @@ export async function getPluginSessions(
 }
 
 function buildDefaultReply(pluginId: string, message: string): string {
-  return `[${pluginId}] 已收到222：${message}`;
+  return `[${pluginId}] 已收到：${message}`;
 }
 
 function sessionIdBelongsToPlugin(pluginId: string, sid: string): boolean {
   return sid === `${pluginId}:default` || sid.startsWith(`${pluginId}:`);
 }
 
+/** 解析 `executeTurn` 返回值；`continue` 语义对全部 kind 与 `executeCommandPlugin` 路径一致（见 `docs/项目功能/插件/插件.md`）。 */
 function normalizeHandleChatResult(
   pluginId: string,
   raw: PluginTurnHandleResult
 ): { reply: string; continue: boolean; persist: PluginChatPersistRow[] } {
   return {
     reply: raw.text.length > 0 ? raw.text : "(empty plugin reply)",
-    // 新约定：默认短路（continue=false），仅显式传 true 才继续后续流程。
+    // 仅显式 `true` 视为继续编排；与 `toTurnResult` 默认 `false` 对齐。
     continue: raw.continue === true,
     persist: normalizePersistRows(pluginId, raw.persist)
   };

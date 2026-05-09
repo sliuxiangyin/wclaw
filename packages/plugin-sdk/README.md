@@ -17,7 +17,7 @@
 
 - **`plugin.json` → `entry`** 指向的 ESM 模块须 **`export default class`**。
 - 宿主在启动时执行 **`new DefaultExport({ pluginId, publish })`**（可选 **`ingestExternalUserTurn`** 由宿主注入），得到 **`PluginRuntimeExtension`** 实例。
-- 一轮输入：**`executeTurn(ctx: PluginTurnContext)`**；编排落库后回流：**`executeCompleted(input: PluginExecuteCompletedInput)`**。
+- 一轮输入：**`executeTurn(ctx: PluginTurnContext)`** → **`PluginTurnHandleResult`**：`text` 必填；**`continue` / `persist` 对所有 kind 语义一致**（`continue` 仅当显式 **`true`** 时表示「中间结果、由宿主决定是否再接 LLM」；缺省/`false` 则 `text` 即本轮最终对用户回复；`toTurnResult` 默认 **`continue: false`**）。编排落库后回流：**`executeCompleted(input: PluginExecuteCompletedInput)`**。
 - 与会话列表 / 清会话 / 调度正交：**`decorateSessions`**、**`clearSession`**、**`getScheduledTasks`**、**`runScheduledTask`**。
 
 详见 `src/runtime-contract.ts` 与 `docs/插件/插件实例与编排.md`。

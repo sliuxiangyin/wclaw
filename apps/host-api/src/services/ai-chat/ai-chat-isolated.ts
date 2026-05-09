@@ -1,10 +1,9 @@
 import { appendChatEvent } from "../../repositories/chat-event.repository.js";
 import { saveChatSessionState, type ChatSessionState } from "../../repositories/chat-session.repository.js";
-import { executeCommandPlugin } from "./ai-chat-command-plugin.js";
 import type { AiOrchestrationContext, ChatBranchResult } from "./ai-chat.types.js";
 
 /**
- * 会话已处在「command_plugin 隔离」：/close 退出，否则本条 user 全文作为子插件命令正文。
+ * 会话已处在「command_plugin 隔离」：路由见 `AiChatCommandEnvelope`（`/close` 退出；有斜杠命令走 `host_command`；否则仅宿主 LLM + 隔离目标插件 manifest）。
  */
 
 /** `/close`：清隔离态并打点（fromPluginId 取退出前的插件） */
@@ -37,26 +36,4 @@ export function orchestrateIsolatedClose(ctx: AiOrchestrationContext): { state: 
       skipSseFinalReplyChunks: false
     }
   };
-}
-
-/** 隔离内命令：不改变会话 mode，交由目标 command_plugin */
-export async function orchestrateIsolatedDelegate(
-  ctx: AiOrchestrationContext
-): Promise<{ state: ChatSessionState; branch: ChatBranchResult }> {
-  const iso = ctx.state.isolatedPluginId;
-  if (!iso) {
-    throw new Error("isolated_delegate without isolatedPluginId");
-  }
-  const branch = await executeCommandPlugin({
-    pluginRuntime: ctx.pluginRuntime,
-    targetPluginId: iso,
-    commandText: ctx.userMessage,
-    messages: ctx.messages,
-    model: ctx.model,
-    traceId: ctx.traceId,
-    hostPluginId: ctx.pluginId,
-    sessionId: ctx.sessionId,
-    stream: ctx.stream
-  });
-  return { state: ctx.state, branch };
 }

@@ -17,6 +17,10 @@ const listStmt = db.prepare(`
   LIMIT @limit OFFSET @offset
 `);
 
+const deleteBySessionStmt = db.prepare(
+  `DELETE FROM chat_events WHERE plugin_id = ? AND session_id = ?`
+);
+
 export function appendChatEvent(input: {
   traceId?: string | null;
   pluginId: string;
@@ -70,6 +74,12 @@ export function listChatEvents(input: {
     payload: safeParse(r.payload_json),
     createdAt: r.created_at
   }));
+}
+
+/** 删除某插件某会话下全部 chat_events；返回删除行数 */
+export function deleteChatEventsBySession(pluginId: string, sessionId: string): number {
+  const r = deleteBySessionStmt.run(pluginId, sessionId);
+  return typeof r.changes === "number" ? r.changes : 0;
 }
 
 function normalizeLimit(limit?: number): number {

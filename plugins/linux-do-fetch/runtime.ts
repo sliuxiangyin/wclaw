@@ -65,6 +65,7 @@ type GanalysisTopicResult = {
   relativePath: string;
   topicId: number;
   title: string;
+  content: string;
 };
 
 export default class LinuxDoFetchRuntime extends BasePluginRuntime {
@@ -74,92 +75,47 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
     super(deps, { requiredBridges: ["mcp", "llm"] });
     this.pluginRoot = path.dirname(fileURLToPath(import.meta.url));
   }
-
   async executeTurn(ctx: PluginTurnContext): Promise<PluginTurnHandleResult> {
-    const emit = this.createActivityEmitter(ctx);
-    const toolName = "linux-do-fetch.executeTurn";
-    const toolCallId = `linux-do-fetch-${Date.now().toString(36)}`;
-    const emitToolLikeActivity = (
-      phase: string,
-      payload: {
-        summary: string;
-        status?: "running" | "complete" | "incomplete" | "requires-action";
-        result?: unknown;
-        error?: unknown;
-      },
-    ) => {
-      const statusType =
-        payload.status ??
-        (phase === "error" ? "incomplete" : phase === "success" ? "complete" : "running");
-      emit(phase, {
-        summary: payload.summary,
-        toolName,
-        toolCallId,
-        argsText: JSON.stringify({ action: "executeTurn" }, null, 2),
-        status:
-          statusType === "incomplete" && payload.error !== undefined
-            ? { type: "incomplete", reason: "error", error: payload.error }
-            : { type: statusType },
-        result:
-          payload.result ??
-          (statusType === "incomplete"
-            ? {
-                isError: true,
-                content: [{ type: "text", text: String(payload.error ?? payload.summary) }],
-              }
-            : undefined),
-      });
-    };
-
-    emitToolLikeActivity("start", { summary: "开始执行 linux-do-fetch 流程。" });
+    this.emitAssistantDelta(ctx, "开始执行 linux-do-fetch 流程。\n\n");
     try {
-     //前沿快讯 
-    //  this.getTopics(ctx,"hot"),this.getTopics(ctx,"latest")
-      // 同一 Playwright MCP 会话下并发 navigate 会互相覆盖页面，须在单会话内串行拉列表
       const hotTopics = await this.getTopics(ctx, "hot");
       const newsTopics = await this.getTopics(ctx, "c/news/34");
       const allTopics = [...hotTopics, ...newsTopics];
-      emitToolLikeActivity("info", { summary: `获取到 ${allTopics.length} 个主题` });
+      this.emitAssistantDelta(ctx, `获取到 ${allTopics.length} 个主题\n\n`);
       const rankedTopics = await this.orderTopics(allTopics);
-      emitToolLikeActivity("info", { summary: `排序后 ${rankedTopics.length} 个主题` });
+      this.emitAssistantDelta(ctx, `排序后 ${rankedTopics.length} 个主题\n\n`);
       if (allTopics.length === 0) {
         const errorSummary =
           "列表为空：未得到含 topic_list 的 JSON（多为 CF 挑战页、网络或 MCP 异常）。请开 debugListFetch 看正文片段；WSL 建议有头 Playwright：DISPLAY=:0，MCP 勿加 --headless。";
-        emitToolLikeActivity("error", {
-          summary: errorSummary,
-          error: errorSummary,
-        });
+        this.emitAssistantDelta(ctx, `${errorSummary}\n\n`);
         return toTurnResult(
           "[linux-do-fetch] 未获取到列表。请开启插件 debugListFetch 并检查 Playwright MCP / 网络 / WAF。"
         );
       }
       if (rankedTopics.length === 0) {
         const errorSummary = `共拉取 ${allTopics.length} 条，排序后均被过滤（置顶/公告/非 regular）。可换一个分类或减少过滤。`;
-        emitToolLikeActivity("error", {
-          summary: errorSummary,
-          error: errorSummary,
-        });
+        this.emitAssistantDelta(ctx, `${errorSummary}\n\n`);
         return toTurnResult("[linux-do-fetch] 排序后无可用主题。");
       }
       const llmPickedTopics = await this.pickTopicsByLlm(rankedTopics);
-      emitToolLikeActivity("info", { summary: `LLM 选出 ${llmPickedTopics.length} 个主题` });
-      // await this.writeTopicCache(rankedTopics, llmPickedTopics);
-     
-      const ganalysisResult = await this.ganalysisTopic(ctx,llmPickedTopics);
+      this.emitAssistantDelta(ctx, `LLM 选出 ${llmPickedTopics.length} 个主题\n\n`);
+
+      const ganalysisResult = await this.ganalysisTopic(ctx, llmPickedTopics);
       if (ganalysisResult) {
-        emitToolLikeActivity("success", {
-          summary: `执行成功: ${ganalysisResult.relativePath}`,
-          result: ganalysisResult,
-        });
-        return toTurnResult(JSON.stringify(ganalysisResult, null, 2));
-      } else {
-        const errorSummary = "执行失败: 没有找到适合分析的主题";
-        emitToolLikeActivity("error", { summary: errorSummary, error: errorSummary });
-        return toTurnResult(`[linux-do-fetch] 执行失败: 没有找到适合分析的主题`);
+        this.emitAssistantDelta(ctx, `执行成功: ${ganalysisResult.relativePath}\n\n`);
+        return toTurnResult(JSON.stringify(ganalysisResult, null, 2), { continue: true });
       }
+      const errorSummary = "执行失败: 没有找到适合分析的主题";
+      this.emitAssistantDelta(ctx, `${errorSummary}\n\n`);
+      return toTurnResult(`[linux-do-fetch] 执行失败: 没有找到适合分析的主题`);
     } catch (error) {
-      const msg =error instanceof PluginBridgeError ? `[${error.bridge}] ${error.code}: ${error.message}` : error instanceof Error ? error.message : String(error);
-      emitToolLikeActivity("error", { summary: `执行失败: ${msg}`, error: msg });
+      const msg =
+        error instanceof PluginBridgeError
+          ? `[${error.bridge}] ${error.code}: ${error.message}`
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      this.emitAssistantDelta(ctx, `执行失败: ${msg}\n`);
       return toTurnResult(`[linux-do-fetch] 执行失败: ${msg}`);
     } finally {
       await this.mcp.destroy(ctx, "playwright").catch(() => undefined);
@@ -212,7 +168,6 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
     ctx: PluginTurnContext,
     candidates: Topic[]
   ): Promise<GanalysisTopicResult | null> {
-    const emit = this.createActivityEmitter(ctx);
     const consumed = await this.loadConsumedTopicIds();
     const queue = candidates.filter((t) => Number.isInteger(t.id) && t.id > 0 && !consumed.has(t.id));
     await this.workspace.ensureDir("articles");
@@ -226,13 +181,13 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
       const extracted = this.extractTopicDetail(topic, detailJson);
       if (!extracted) continue;
       const judgment = await this.judgeTopicPublishSuitability(extracted);
-      emit("info", { summary: `判断主题是否适合发布: ${judgment.suitable}` });
+      this.emitAssistantDelta(ctx, `判断主题是否适合发布: ${judgment.suitable}\n`);
       if (!judgment.suitable) continue;
       const md = await this.buildWeixinStyleMarkdown(extracted);
       const slugSafe = this.slugSafeForFilename(extracted.slug);
       const relativePath = `articles/${extracted.id}-${slugSafe}.md`;
       await this.workspace.writeText(relativePath, md);
-      return { relativePath, topicId: extracted.id, title: extracted.title };
+      return { relativePath, topicId: extracted.id, title: extracted.title ,content:md};
     }
     return null;
   }
@@ -536,7 +491,6 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
   //获取主题列表
   async getTopics(ctx: PluginTurnContext, cate: string): Promise<Topic[]> {
     const debugFetch = this.isDebugListFetch(ctx.config);
-    const dbgEmit = debugFetch ? this.createActivityEmitter(ctx) : null;
 
     await this.mcp.call(ctx, {
       toolId: "playwright/browser_navigate",
@@ -548,10 +502,11 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
     const listing = (data as TopicPayload) ?? null;
     const topics = listing?.topic_list?.topics || [];
 
-    if (dbgEmit && ((!data && textBlock) || topics.length === 0)) {
-      dbgEmit("debug-list-fetch", {
-        summary: `[${cate}] 解析 topic_list=${topics.length}，正文前几字: ${this.oneLineSnippet(textBlock || "(empty)", 400)}`
-      });
+    if (debugFetch && ((!data && textBlock) || topics.length === 0)) {
+      this.emitAssistantDelta(
+        ctx,
+        `[${cate}] 解析 topic_list=${topics.length}，正文前几字: ${this.oneLineSnippet(textBlock || "(empty)", 400)}\n`
+      );
     }
 
     if (!data) {

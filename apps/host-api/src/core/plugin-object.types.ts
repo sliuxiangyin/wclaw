@@ -1,27 +1,5 @@
 import type { PluginRuntimeExtension, PluginSessionRow } from "@wclaw/plugin-sdk";
 
-/** Chat 空线程欢迎语与快捷建议；所有 `kind` 共用同一 JSON 形状，`multiSession` 仅在「多会话 runtime」时读取。 */
-export type PluginGuideSuggestion = {
-  prompt: string;
-  /** 展示用短标签；缺省与 `prompt` 相同 */
-  text?: string;
-};
-
-export type PluginGuideMultiSession = {
-  defaultSessionWelcome?: string;
-  sessionWelcome?: string;
-  defaultSessionSuggestions?: PluginGuideSuggestion[];
-  sessionSuggestions?: PluginGuideSuggestion[];
-};
-
-export type PluginGuide = {
-  /** 通用：command_plugin / single-session；或多会话但未配置 `multiSession` 某分支时的回退 */
-  welcome?: string;
-  suggestions?: PluginGuideSuggestion[];
-  /** 仅 `runtime_plugin` + `sessionProvider.mode=multi`：`${id}:default` 与其余会话可分开展示 */
-  multiSession?: PluginGuideMultiSession;
-};
-
 export type PluginManifest = {
   id: string;
   displayName: string;
@@ -42,7 +20,6 @@ export type PluginManifest = {
   sessionProvider?: Record<string, unknown>;
   configSchema?: Record<string, unknown>;
   defaultConfig?: Record<string, unknown>;
-  guide?: PluginGuide;
 };
 
 

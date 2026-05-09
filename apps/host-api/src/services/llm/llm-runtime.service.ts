@@ -1,19 +1,48 @@
-import { generateText, stepCountIs, streamText, type ModelMessage, type ToolSet, type UIMessageChunk } from "ai";
+import {
+  convertToModelMessages,
+  generateText,
+  stepCountIs,
+  streamText,
+  type ModelMessage,
+  type ToolSet,
+  type UIMessage,
+  type UIMessageChunk
+} from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { AppError } from "../../core/app-error.js";
 import { ERROR_CODES } from "../../core/error-codes.js";
 import { getLlmConfig } from "../../repositories/llm-config.repository.js";
 
 type LlmInputMessage = { role: "system" | "user" | "assistant"; content: string };
+
+function logLlmRequestMessages(kind: "generate" | "stream", input: {
+  messages: LlmInputMessage[];
+  modelOverride?: string;
+  tools?: ToolSet;
+  toolPolicy?: "auto" | "none";
+}): void {
+  // 便于排查上下文污染：打印每次 LLM 请求的消息窗口（完整内容）。
+  console.info("[llm-request]", {
+    kind,
+    modelOverride: input.modelOverride ?? null,
+    toolPolicy: input.toolPolicy ?? "auto",
+    hasTools: Boolean(input.tools && Object.keys(input.tools).length > 0),
+    messageCount: input.messages.length,
+    messages: input.messages
+  });
+}
+
 export async function generateWithConfiguredLlm(input: {
   messages: LlmInputMessage[];
   modelOverride?: string;
   tools?: ToolSet;
   abortSignal?: AbortSignal;
+  toolPolicy?: "auto" | "none";
 }) {
+  logLlmRequestMessages("generate", input);
   const runtime = buildLlmRuntime(input.modelOverride);
   const messages = runtime.toModelMessages(input.messages);
-  const hasTools = Boolean(input.tools && Object.keys(input.tools).length > 0);
+  const hasTools = input.toolPolicy !== "none" && Boolean(input.tools && Object.keys(input.tools).length > 0);
   try {
     const result = await generateText({
       model: runtime.model,
@@ -41,11 +70,12 @@ export async function streamWithConfiguredLlm(input: {
   onChunk?: (chunk: Record<string, unknown> & { type: string }) => void;
   tools?: ToolSet;
   abortSignal?: AbortSignal;
+  toolPolicy?: "auto" | "none";
 }) {
+  logLlmRequestMessages("stream", input);
   const runtime = buildLlmRuntime(input.modelOverride);
   const messages = runtime.toModelMessages(input.messages);
-  const hasTools = Boolean(input.tools && Object.keys(input.tools).length > 0);
-  console.log("messages", messages);
+  const hasTools = input.toolPolicy !== "none" && Boolean(input.tools && Object.keys(input.tools).length > 0);
   try {
     const result = streamText({
       model: runtime.model,
@@ -75,6 +105,38 @@ export async function streamWithConfiguredLlm(input: {
   }
 }
 
+export async function streamUiMessagesWithConfiguredLlm(input: {
+  messages: UIMessage[];
+  system?: string;
+  modelOverride?: string;
+  tools?: ToolSet;
+  abortSignal?: AbortSignal;
+  toolPolicy?: "auto" | "none";
+}) {
+  const runtime = buildLlmRuntime(input.modelOverride);
+  const hasTools = input.toolPolicy !== "none" && Boolean(input.tools && Object.keys(input.tools).length > 0);
+  try {
+    const system = [runtime.systemPrompt, input.system]
+      .map((s) => (typeof s === "string" ? s.trim() : ""))
+      .filter(Boolean)
+      .join("\n\n");
+    return streamText({
+      model: runtime.model,
+      ...(system ? { system } : {}),
+      messages: await convertToModelMessages(input.messages),
+      allowSystemInMessages: true,
+      abortSignal: input.abortSignal,
+      stopWhen: stepCountIs(runtime.maxSteps),
+      ...(hasTools ? { tools: input.tools } : {}),
+      ...(!hasTools ? { toolChoice: "none" as const } : {}),
+      ...(typeof runtime.temperature === "number" ? { temperature: runtime.temperature } : {}),
+      ...(typeof runtime.maxTokens === "number" ? { maxTokens: runtime.maxTokens } : {})
+    });
+  } catch (error) {
+    throw new AppError(ERROR_CODES.LLM_UPSTREAM_ERROR, normalizeLlmErrorMessage(error), 502);
+  }
+}
+
 function buildLlmRuntime(modelOverride?: string) {
   const cfg = getLlmConfig();
   const modelName = readString(cfg, ["model"], modelOverride ?? "gpt-4o-mini");
@@ -97,6 +159,7 @@ function buildLlmRuntime(modelOverride?: string) {
 
   return {
     model: provider.chat(modelName),
+    systemPrompt,
     temperature,
     maxTokens,
     maxSteps,

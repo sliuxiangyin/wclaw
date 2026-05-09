@@ -1,5 +1,6 @@
 import { AppError } from "../core/app-error.js";
 import { ERROR_CODES } from "../core/error-codes.js";
+import type { UIMessage } from "ai";
 
 export function toAiChatErrorPayload(error: unknown): { code: string; message: string } {
   if (error instanceof AppError) {
@@ -12,21 +13,20 @@ export function toAiChatErrorPayload(error: unknown): { code: string; message: s
 }
 
 export type AiChatBody = {
-  pluginId: string;
-  sessionId: string;
-  messages: Array<{
-    id: string;
-    role: "system" | "user" | "assistant";
-    content: string;
-  }>;
+  pluginId?: string;
+  sessionId?: string;
+  messages: UIMessage[];
+  system?: string;
   model?: string;
 };
 
-export function validateAiChatBody(body: AiChatBody) {
-  if (!body?.pluginId || typeof body.pluginId !== "string") {
+export function validateAiChatBody(body: AiChatBody, headers?: { pluginId?: unknown; sessionId?: unknown }) {
+  const pluginId = typeof body?.pluginId === "string" ? body.pluginId : headers?.pluginId;
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : headers?.sessionId;
+  if (!pluginId || typeof pluginId !== "string") {
     throw new AppError(ERROR_CODES.INVALID_REQUEST, "pluginId is required", 400);
   }
-  if (!body?.sessionId || typeof body.sessionId !== "string") {
+  if (!sessionId || typeof sessionId !== "string") {
     throw new AppError(ERROR_CODES.INVALID_REQUEST, "sessionId is required", 400);
   }
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -36,8 +36,11 @@ export function validateAiChatBody(body: AiChatBody) {
     if (!msg || typeof msg !== "object") {
       throw new AppError(ERROR_CODES.INVALID_REQUEST, "each message must be an object", 400);
     }
-    if (typeof msg.role !== "string" || typeof msg.content !== "string") {
-      throw new AppError(ERROR_CODES.INVALID_REQUEST, "message.role and message.content are required", 400);
+    if (typeof msg.id !== "string" || typeof msg.role !== "string") {
+      throw new AppError(ERROR_CODES.INVALID_REQUEST, "message.id and message.role are required", 400);
+    }
+    if (!Array.isArray(msg.parts)) {
+      throw new AppError(ERROR_CODES.INVALID_REQUEST, "message.parts is required", 400);
     }
   }
 }

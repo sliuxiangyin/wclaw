@@ -9,7 +9,7 @@
 
 - [ ] `plugin.json.kind` 明确为 `runtime_plugin`。
 - [ ] `sessionProvider.mode`（`single`/`multi`）与实现一致。
-- [ ] `guide.welcome`、会话建议语与真实交互路径一致。
+- [ ] `decorateSessions` / 会话行 `ui` 中的欢迎语、建议词与真实交互路径一致（清单不再包含 `guide`）。
 - [ ] 若为多会话模式，默认会话与账号会话职责边界清晰。
 
 ---

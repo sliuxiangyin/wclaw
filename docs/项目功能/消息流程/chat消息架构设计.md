@@ -1,4 +1,346 @@
-# chat消息架构设计
+# Chat 消息架构设计
+
+本文是宿主 Chat 主链路的约束文档。后续开发必须以 **AI SDK v6 `UIMessage` 协议 + assistant-ui runtime** 为标准，不再回到自定义 runId、手写 SSE chunk、工具输出文本化、activity replay 的旧路线。
+
+## 目标
+
+- 前端、后端、LLM、MCP 工具、持久化统一使用 AI SDK v6 的 `UIMessage` / `UIMessage.parts` 语义。
+- 工具调用必须作为 AI SDK tool part 进入流和历史，禁止伪造成 assistant 文本。
+- 用户可见消息与审计事件分离：`plugin_chat_ui_messages` 保存 UI 消息，`chat_events` 保存排障/审计事件。
+- 前端只消费 assistant-ui runtime 的标准消息流，不手写 `UIMessageChunk` 生命周期。
+
+## 标准链路总览
+
+```mermaid
+flowchart LR
+  User[User] --> Console[Ai05 assistant-ui]
+  Console --> Transport[PluginChatTransport]
+  Transport -->|"POST /api/ai/chat UIMessage[]"| Route[ai-chat.routes]
+  Route --> Controller[handleAiChatStream]
+  Controller --> StoreUser[upsertUiMessage user]
+  Controller --> Router[AiChatCommandEnvelope]
+  Router --> LlmRuntime[streamUiMessagesWithConfiguredLlm]
+  LlmRuntime -->|"convertToModelMessages"| AiSdk[streamText]
+  AiSdk --> Tools[MCP tools as AI SDK ToolSet]
+  Tools --> Gateway[MCP Gateway]
+  AiSdk -->|"toUIMessageStreamResponse"| Transport
+  Controller --> StoreAssistant[upsertUiMessage assistant]
+  Controller --> Events[chat_events]
+```
+
+## 每一步执行文件与职责
+
+### 1. 前端运行时创建
+
+文件：`apps/host-console/src/components/ai-05.tsx`
+
+核心方法：
+
+- `Ai05()`
+  - 创建 `PluginChatTransport`。
+  - 调用 `useChatRuntime({ transport, messages, onFinish })`。
+  - 通过 `AssistantRuntimeProvider` 把 runtime 提供给 assistant-ui primitives。
+- `Ai05Composer()`
+  - 维护输入框。
+  - 调用 `aui.composer().setText()` 与 `aui.composer().send()` 进入 assistant-ui 发送管线。
+- `Ai05AssistantMessage()`
+  - 渲染 `message.parts`。
+  - 文本使用 Markdown 渲染。
+  - reasoning 与 tool part 只做展示，不改写消息协议。
+
+要求：
+
+- UI 层只能渲染 `parts`，不得把 tool/reasoning/data part 拼成 `content` 再发给后端。
+- `onFinish` 只做界面侧刷新提示，例如刷新会话列表，不负责保存消息。
+- 若要新增 tool UI，只新增 part renderer，不改 transport 协议。
+
+### 2. 前端 Transport
+
+文件：`apps/host-console/src/features/chat/runtime/plugin-chat-transport.ts`
+
+核心类：
+
+- `PluginChatTransport extends AssistantChatTransport`
+  - `api` 固定指向 `${VITE_API_BASE_URL}/api/ai/chat`。
+  - 通过请求头传递：
+    - `X-Wclaw-Plugin-Id`
+    - `X-Wclaw-Session-Id`
+  - 流解析、取消、消息格式由 `AssistantChatTransport` 与 AI SDK 处理。
+
+要求：
+
+- 禁止恢复 `POST /api/ai/runs` + `GET /api/ai/runs/:id/stream` 的自定义双请求模式。
+- 禁止在前端实现 `parseSseBlock`、`toUiMessageChunk`、断线补 `finish` 等逻辑。
+- 若需要新增请求参数，优先使用请求 body 中的标准字段或明确的 header，不修改 `UIMessage` 结构。
+
+### 3. 历史加载
+
+文件：
+
+- `apps/host-console/src/features/chat/hooks/use-plugin-chat-timeline-bootstrap.ts`
+- `apps/host-console/src/lib/api/plugin-chat.api.ts`
+- `apps/host-api/src/services/plugin-chat/plugin-chat-history.service.ts`
+- `apps/host-api/src/repositories/plugin-chat.repository.ts`
+
+核心方法：
+
+- 前端 `usePluginChatTimelineBootstrap(pluginId, sessionId)`
+  - 调用 `getPluginChatHistoryTimeline()`。
+  - 直接接收后端返回的 `UIMessage[]`。
+  - 不再经过 `timelineToUiBootstrap`。
+- 后端 `getPluginChatHistoryTimeline()`
+  - 校验 session。
+  - 调用 `listUiMessages()`。
+  - 返回 `{ pluginId, sessionId, limit, messages }`。
+- 仓储 `listUiMessages()`
+  - 从 `plugin_chat_ui_messages.ui_message_json` 读取完整 `UIMessage`。
+
+要求：
+
+- 历史恢复的唯一权威数据源是 `ui_message_json`。
+- 禁止从 `content + activity chunks` replay 出 `parts`。
+- 禁止让 `chat_events` 参与 UIMessage 重建。
+
+### 4. 路由入口
+
+文件：`apps/host-api/src/routes/ai-chat.routes.ts`
+
+核心方法：
+
+- `registerAiChatRoutes()`
+  - 注册 `POST /api/ai/chat`。
+  - 调用 `validateAiChatBody()`。
+  - 把流式处理委托给 `handleAiChatStream()`。
+  - 注册 `GET /api/ai/events` 供审计查询。
+
+要求：
+
+- routes 只做路由映射、基础校验和响应包装。
+- 不在 routes 中写 LLM、MCP、持久化或流式拼装逻辑。
+- `POST /api/ai/chat` 是管理台 Chat 主入口，不再新增并行主入口。
+
+### 5. 请求校验
+
+文件：`apps/host-api/src/routes/ai-chat-validation.ts`
+
+核心方法：
+
+- `validateAiChatBody(body, headers)`
+  - 校验 `pluginId`、`sessionId` 可从 body 或 header 取得。
+  - 校验 `messages` 为非空数组。
+  - 校验每条消息有 `id`、`role`、`parts`。
+
+要求：
+
+- 后端入口接收标准 `UIMessage[]`，不得要求前端额外提供扁平 `content`。
+- 若新增自定义 data part，必须先定义类型与转换策略，再调整校验。
+
+### 6. Chat 流控制器
+
+文件：`apps/host-api/src/controllers/ai-chat-stream.controller.ts`
+
+核心方法：
+
+- `handleAiChatStream(request, reply, pluginRuntime)`
+  - 从 header/body 解析 `pluginId` 与 `sessionId`。
+  - 调用 `persistIncomingMessages()` 保存本轮已提交的 user/assistant 历史。
+  - 用 `extractLastUserMessage()` 读取本轮用户文本，用于命令路由判别。
+  - 调用 `AiChatCommandEnvelope.handler()` 选择编排路径。
+  - 默认 LLM 路径：
+    - 构造 MCP `ToolSet`。
+    - 调用 `streamUiMessagesWithConfiguredLlm()`。
+    - 使用 `result.toUIMessageStreamResponse({ originalMessages, onFinish })` 返回标准流。
+    - `onFinish` 保存完整 assistant `UIMessage`。
+  - 非默认 LLM 路径：
+    - 调用 `orchestrateChat()`。
+    - 用 `createTextStreamResponse()` 生成标准文本流。
+
+中断处理：
+
+- `request.raw.on("close")` 触发 `AbortController.abort()`，传给 `streamText`。
+- `onFinish` 即使 `isAborted=true`，只要已有可保存的 `responseMessage.parts`，也必须落库。
+- 中断落库消息需带 `metadata.cancelled = true`。
+- 中断审计事件写为 `chat.response.cancelled`。
+
+要求：
+
+- 不手写 `text-start` / `text-delta` / `finish` 的 LLM 主路径，LLM 主路径由 `toUIMessageStreamResponse()` 生成。
+- 只有非 LLM/同步文本结果可以用 `createTextStreamResponse()` 转成最小标准流。
+- 不把工具结果写成 `[tool ...] success` 文本。
+
+### 7. 流响应辅助
+
+文件：`apps/host-api/src/controllers/ai-chat-stream-response.controller.ts`
+
+核心方法：
+
+- `sendWebResponse(reply, response)`
+  - 将 Web `Response` 桥接到 Fastify `reply.raw`。
+  - 因 `reply.hijack()` 会绕过 Fastify CORS 插件，必须补：
+    - `Access-Control-Allow-Origin`
+    - `Access-Control-Allow-Credentials`
+    - `Vary: Origin`
+- `createTextStreamResponse()`
+  - 将普通文本结果转为最小 AI SDK UIMessage stream。
+  - 同时保存对应 assistant `UIMessage`。
+- `hasPersistableParts()`
+  - 判断中断/完成时是否有可保存内容。
+- `withCancelledMetadata()`
+  - 给中断消息补 `metadata.cancelled=true`。
+- `textFromUiMessage()`
+  - 仅用于审计或摘要，不作为 LLM 上下文权威来源。
+
+要求：
+
+- CORS 头必须在 hijack 流响应中显式保留。
+- 该文件只处理响应桥接和最小消息辅助，不引入编排决策。
+
+### 8. LLM Runtime
+
+文件：`apps/host-api/src/services/llm/llm-runtime.service.ts`
+
+核心方法：
+
+- `streamUiMessagesWithConfiguredLlm(input)`
+  - 读取 LLM 配置。
+  - 合并全局 `systemPrompt` 与本轮 `system`。
+  - 调用 `await convertToModelMessages(input.messages)`。
+  - 调用 `streamText({ model, system, messages, tools, stopWhen, abortSignal })`。
+  - 返回 `streamText` result，由控制器调用 `toUIMessageStreamResponse()`。
+- `generateWithConfiguredLlm()` / `streamWithConfiguredLlm()`
+  - 兼容非标准旧调用路径或插件命令路径。
+  - 新的管理台 Chat 主路径不得优先使用这两个扁平文本接口。
+
+要求：
+
+- 管理台主路径必须使用 `streamUiMessagesWithConfiguredLlm()`。
+- LLM 上下文转换必须使用 `convertToModelMessages(UIMessage[])`。
+- 多步工具调用必须设置 `stopWhen: stepCountIs(maxSteps)`。
+- `abortSignal` 必须传入 `streamText`。
+
+### 9. MCP 工具注入
+
+文件：`apps/host-api/src/services/ai-chat/ai-chat-runtime-default.ts`
+
+核心方法：
+
+- `buildRuntimeDefaultLlmTools(manifest, mcpToolForbidden, sessionId, traceId)`
+  - 读取插件 `manifest.mcp.allowedServers`。
+  - 读取 MCP catalog。
+  - 应用会话级禁用策略。
+  - 为每个允许工具生成 AI SDK `ToolSet` 项。
+  - `execute()` 内调用 `gateway.invokeTool()`。
+
+要求：
+
+- MCP 工具必须作为 AI SDK server-side tools 注入 `streamText`。
+- 工具 schema 使用 `inputSchema`。
+- 工具输出由 AI SDK 变成 tool part，不由宿主拼接进 assistant 文本。
+- 禁止插件 ID 特判。
+
+### 10. 消息持久化
+
+文件：
+
+- `apps/host-api/src/core/db.ts`
+- `apps/host-api/src/repositories/plugin-chat.repository.ts`
+
+核心表：`plugin_chat_ui_messages`
+
+关键字段：
+
+- `plugin_id`
+- `session_id`
+- `message_id`
+- `trace_id`
+- `role`
+- `ui_message_json`
+- `content_plain`
+- `source_type`
+- `source_plugin_id`
+- `llm_eligible`
+- `context_summary`
+- `created_at`
+- `updated_at`
+
+核心方法：
+
+- `upsertUiMessage()`
+  - 保存完整 `UIMessage`。
+  - `ui_message_json` 是权威展示与恢复数据。
+  - `content_plain` 只作派生缓存。
+- `listUiMessages()`
+  - 按会话读取历史并解析 `UIMessage[]`。
+- `deleteAllChatMessagesForSession()`
+  - 清理当前会话消息。
+- `appendChatMessage()`
+  - 仅作为非 AI SDK 路径的文本消息适配器，把文本包装成最小 `UIMessage`。
+
+要求：
+
+- 禁止恢复 `plugin_chat_messages` 纯文本表作为主消息表。
+- 禁止恢复 `plugin_chat_activity` 作为 UI replay 权威数据源。
+- `chat_events` 只做审计，不进入 LLM messages。
+- 数据库变更可以 breaking，但必须同步 repository 和历史加载 API。
+
+## 最佳实践
+
+- **协议单一**：前后端只传 `UIMessage[]`；不要再发 `{ role, content, tool-context }` 这类自定义上下文格式。
+- **工具结构化**：工具调用、工具输入、工具输出必须保留为 AI SDK tool part。
+- **文本只展示**：`content_plain`、`textFromUiMessage()` 只用于摘要、列表、审计，不作为重新构造 LLM 上下文的权威来源。
+- **持久化最终消息**：assistant 消息在 `toUIMessageStreamResponse().onFinish` 中保存；中断时也保存已有 partial message。
+- **审计旁路**：`chat_events` 可以记录 `chat.llm.called`、`chat.response.completed`、`chat.response.cancelled`，但不能被拼回 `UIMessage.parts`。
+- **取消传递**：前端停止或连接断开必须传到后端 `AbortController`，再传到 `streamText`。
+- **CORS 注意**：凡是使用 `reply.hijack()` 桥接 Web Response，必须显式补 CORS 响应头。
+- **分层约束**：routes 保持薄层；controllers 负责 HTTP 编排；services 负责业务；repositories 负责 SQLite。
+
+## 禁止事项
+
+- 禁止新增或恢复 `POST /api/ai/runs`、`GET /api/ai/runs/:runId/stream` 作为管理台 Chat 主路径。
+- 禁止手写 AI SDK 生命周期 chunk：`start`、`text-start`、`text-delta`、`finish-step`、`finish`，除非是在非 LLM 文本结果的最小桥接函数内。
+- 禁止在前端手动解析 SSE 并强转 `UIMessageChunk`。
+- 禁止把工具结果写成 `[tool xxx] success: ...` 后喂回 LLM。
+- 禁止从 `chat_events` 或旧 activity 表恢复 assistant-ui 消息。
+- 禁止在 host-console 中按 `pluginId === "weixin-bridge"` 等方式特判 UI/欢迎语/工具展示。
+- 禁止在 services 中值导入 providers；需要实例时从组合根显式传入端口。
+
+## 变更检查清单
+
+修改 Chat 主链路时必须检查：
+
+- `apps/host-console/src/features/chat/runtime/plugin-chat-transport.ts` 是否仍使用 `AssistantChatTransport`。
+- `apps/host-api/src/routes/ai-chat.routes.ts` 是否仍只委托 `handleAiChatStream()`。
+- `apps/host-api/src/controllers/ai-chat-stream.controller.ts` 是否仍在 `onFinish` 保存 assistant `UIMessage`。
+- `apps/host-api/src/services/llm/llm-runtime.service.ts` 主路径是否仍使用 `convertToModelMessages()`。
+- `apps/host-api/src/services/ai-chat/ai-chat-runtime-default.ts` MCP 是否仍作为 AI SDK `ToolSet` 注入。
+- `apps/host-api/src/repositories/plugin-chat.repository.ts` 是否仍以 `ui_message_json` 为权威。
+- `apps/host-console/src/features/chat/hooks/use-plugin-chat-timeline-bootstrap.ts` 是否直接加载 `UIMessage[]`。
+
+验证命令：
+
+```bash
+pnpm --filter @wclaw/host-api build
+pnpm --filter @wclaw/host-console build
+pnpm lint:arch
+```
+
+手工验收：
+
+- 多轮浏览器/MCP 工具调用后，下一轮 LLM 请求中不应出现 `[tool ...] success` 这类伪工具文本。
+- 刷新页面后，历史消息应能通过 `UIMessage.parts` 恢复文本、reasoning、tool 输入和 tool 输出。
+- 点击停止后，已有 assistant partial 回复应落库，并带 `metadata.cancelled=true`。
+- CORS 预检与流式响应都应允许 `http://localhost:5173` 调用 `http://localhost:8787/api/ai/chat`。
+
+---
+
+## 附录A：历史方案（已废弃，保留参考）
+
+> 状态：**已废弃**（暂不删除，仅归档保留）。
+>  
+> 口径：本文件前半段「AI SDK v6 / `UIMessage` 主链路」是当前**唯一权威规范**。  
+> 以下历史内容仅用于背景追溯与迁移参考，**不得**作为新增实现依据；若与前半段冲突，一律以前半段为准。
+
+## 目标（历史）
 
 ## 目标
 

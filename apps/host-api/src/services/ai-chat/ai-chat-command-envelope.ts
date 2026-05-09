@@ -32,26 +32,29 @@ export type CommandMessageParseTestResult = {
  */
 export type AiOrchestrationPath =
   | { kind: "isolated_close" }
-  | { kind: "isolated_delegate" }
+  /** 隔离内、无显式斜杠命令：仅宿主 LLM，使用隔离目标插件的 manifest（systemPrompt / MCP 声明） */
+  | { kind: "isolated_plain_llm"; isolatedPluginId: string }
+  | { kind: "command_plugin_usage_hint" }
   | { kind: "host_bad_format" }
   | { kind: "host_mcp_cross_plugin_forbidden" }
   | { kind: "runtime_default" }
   | { kind: "host_command"; targetPluginId: string; commandText: string }
   | {
-    kind: "host_mcp_command";
-    targetPluginId: string;
-    commandText: string;
-    parsedMcp: ParsedMcpExplicitCommand;
-  };
+      kind: "host_mcp_command";
+      targetPluginId: string;
+      commandText: string;
+      parsedMcp: ParsedMcpExplicitCommand;
+    };
 
 /**
  * 路由判别（与 `resolveCommandPluginMode` 对齐）：
  *
- * 1. `ephemeral_no_context`：无论是否有显式命令，一律 `host_command`（无解析命中时用当前插件 + 全文）。
- * 2. `ephemeral_with_context`：同上。
- * 3. 其它（如 `runtime_plugin` 未 force、`isolated_chat` 等）：仅当解析到命令时 `host_command`，否则 `runtime_default`。
- * 4. 命令解析：先长命令 `/command <pluginId> [args]`，再短命令 `/xxx`（目标为当前 host 插件）。
- * 5. `runtime_plugin` 且 `sessionRow.forceExecuteTurn === true`：一律 `host_command`（规则同 1/2）。
+ * 1. 隔离模式：以 **隔离目标插件 id** 参与短命令解析；`/close` 退出；有斜杠命中则 `host_command`；否则 `isolated_plain_llm`。
+ * 2. `ephemeral_no_context`：无斜杠命中 → `command_plugin_usage_hint`；有斜杠 → `host_command`。
+ * 3. `ephemeral_with_context` / `isolated_chat`：无斜杠 → `runtime_default`（宿主 LLM + 插件 systemPrompt/MCP）；有斜杠 → `host_command`。
+ * 4. `runtime_plugin` 且 `sessionRow.forceExecuteTurn === true`：无斜杠仍将全文当命令 **host_command**；有斜杠按解析走。
+ * 5. 其余：有斜杠 → `host_command`，无斜杠 → `runtime_default`。
+ * 6. 命令解析：先长命令 `/command <pluginId> [args]`，再短命令 `/xxx`（“虚拟 host”为当前会话 host 插件 id；隔离内为隔离目标 id）。
  */
 export class AiChatCommandEnvelope {
   static async handler(
@@ -61,7 +64,16 @@ export class AiChatCommandEnvelope {
   ): Promise<AiOrchestrationPath> {
     if (state.mode === "isolated" && state.isolatedPluginId) {
       if (userMessage.trim() === "/close") return { kind: "isolated_close" };
-      return { kind: "isolated_delegate" };
+      const iso = state.isolatedPluginId;
+      const routedIso = this.parseHostCommandRoute(iso, userMessage);
+      if (routedIso) {
+        return this.resolveHostCommandOrMcpPath(
+          plugin.pluginId,
+          routedIso.targetPluginId,
+          routedIso.commandText
+        );
+      }
+      return { kind: "isolated_plain_llm", isolatedPluginId: iso };
     }
 
     const manifest = plugin.manifest;
@@ -74,15 +86,35 @@ export class AiChatCommandEnvelope {
 
     const routed = this.parseHostCommandRoute(plugin.pluginId, userMessage);
 
-    const alwaysHostCommand =
-      cmdMode === "ephemeral_no_context" ||
-      cmdMode === "ephemeral_with_context" ||
-      (cmdMode === "runtime_plugin" && sessionRow?.forceExecuteTurn === true);
+    const forceCommandEveryMessage =
+      cmdMode === "runtime_plugin" && sessionRow?.forceExecuteTurn === true;
 
-    if (alwaysHostCommand) {
+    if (forceCommandEveryMessage) {
       const targetPluginId = routed?.targetPluginId ?? plugin.pluginId;
       const commandText = routed?.commandText ?? (userMessage.trim() || "default");
       return this.resolveHostCommandOrMcpPath(plugin.pluginId, targetPluginId, commandText);
+    }
+
+    if (cmdMode === "ephemeral_no_context") {
+      if (routed) {
+        return this.resolveHostCommandOrMcpPath(
+          plugin.pluginId,
+          routed.targetPluginId,
+          routed.commandText
+        );
+      }
+      return { kind: "command_plugin_usage_hint" };
+    }
+
+    if (cmdMode === "ephemeral_with_context" || cmdMode === "isolated_chat") {
+      if (routed) {
+        return this.resolveHostCommandOrMcpPath(
+          plugin.pluginId,
+          routed.targetPluginId,
+          routed.commandText
+        );
+      }
+      return { kind: "runtime_default" };
     }
 
     if (routed) {

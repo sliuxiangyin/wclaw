@@ -13,8 +13,8 @@ import { dispatchAiOrchestration } from "./ai-chat-dispatch.js";
 
 // 从本轮 messages 载荷里取出最后一条 user 正文
 import { extractLastUserMessage } from "./ai-chat-context-window.js";
-import { runInSessionQueue } from "./ai-chat-session-queue.service.js";
 import { resolveSessionPersistDecision } from "./session-persistence-policy.service.js";
+import { runInSessionQueue } from "./ai-chat-session-queue.service.js";
 // 本模块对外输入/上下文/输出类型
 import type { PluginExecuteCompletedInput, PluginRuntimeExtension } from "@wclaw/plugin-sdk";
 import type { AiOrchestrationContext, OrchestrateChatInput, OrchestrateChatOutput } from "./ai-chat.types.js";
@@ -31,6 +31,7 @@ export type AiChatOrchestrateRoundInput = {
   abortSignal?: AbortSignal;
   stream?: OrchestrateChatInput["stream"];
   reflowMetadata?: Record<string, unknown>;
+  persistMessages?: boolean;
 };
 
 /**
@@ -56,8 +57,9 @@ export class AiChatOrchestrator {
     const { sessionId, messages, model, traceId, abortSignal, stream, reflowMetadata } = input;
     const userMessage = extractLastUserMessage(messages);
     const shouldPersist = await resolveSessionPersistDecision(this.hostPlugin);
+    const persistMessages = input.persistMessages !== false;
 
-    if (shouldPersist(sessionId)) {
+    if (persistMessages && shouldPersist(sessionId)) {
       const writeOptions: AppendChatMessageOptions = { traceId: traceId ?? null };
       appendChatMessage(this.pluginId, sessionId, "user", userMessage, {
         ...writeOptions
@@ -103,7 +105,7 @@ export class AiChatOrchestrator {
       skipSseFinalReplyChunks
     } = branch;
 
-    if (shouldPersist(sessionId)) {
+    if (persistMessages && shouldPersist(sessionId)) {
       const writeOptions: AppendChatMessageOptions = {
         traceId: traceId ?? null,
         sourceType,
@@ -182,15 +184,23 @@ export async function orchestrateChat(input: OrchestrateChatInput): Promise<Orch
     throw new Error("plugin not found");
   }
   const orchestrator = new AiChatOrchestrator(input.pluginRuntime, hostPlugin);
-  return runInSessionQueue(orchestrator.pluginId, input.sessionId, async () => {
-    return orchestrator.executeRound({
-      sessionId: input.sessionId,
-      messages: input.messages,
-      model: input.model,
-      traceId: input.traceId,
-      abortSignal: input.abortSignal,
-      stream: input.stream,
-      reflowMetadata: input.reflowMetadata
-    });
-  });
+  const turnSource = input.turnSource ?? "external";
+  const sessionConcurrency = input.sessionConcurrency ?? "queue";
+  return runInSessionQueue(
+    orchestrator.pluginId,
+    input.sessionId,
+    async () => {
+      return orchestrator.executeRound({
+        sessionId: input.sessionId,
+        messages: input.messages,
+        model: input.model,
+        traceId: input.traceId,
+        abortSignal: input.abortSignal,
+        stream: input.stream,
+        reflowMetadata: input.reflowMetadata,
+        persistMessages: input.persistMessages
+      });
+    },
+    { turnSource, sessionConcurrency }
+  );
 }

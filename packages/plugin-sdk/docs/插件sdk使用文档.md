@@ -64,7 +64,6 @@ const mod: PluginRuntimeExtensionModule = { default: MyPlugin };
 | `config` | 宿主合并后的插件配置对象 |
 | `argv?` | 宿主可选注入：`command` + `args[]` |
 | `emitAssistantDelta?` | 流式输出增量 |
-| `emitPluginActivity?` | 阶段事件；`data.summary` 可被控制台用作整段说明 |
 
 ### 2.2 `PluginTurnHandleResult`
 
@@ -193,7 +192,7 @@ export default MyRuntime;
 | 成员 | 作用 |
 |------|------|
 | **`publish`** | 包装 **`deps.publish`**
-| **`emitPluginActivity` / `emitAssistantDelta`** | 透传上下文回调
+| **`emitAssistantDelta`**（基类 `this.emitAssistantDelta(ctx, delta)`） | 流式助手正文，透传自宿主 `PluginTurnContext`
 | **`this.mcp`** | `contextKey`、`call`、`callRaw`、`destroy`（会话维度的默认 **`contextKey`** 形如 **`pluginId:sessionId`**）
 | **`this.llm`** | `call`、`text`
 | **`this.ingest`** | `call`
