@@ -69,6 +69,17 @@ export class AiRunProvider {
     return this.runs.get(runId) ?? null;
   }
 
+  getActiveRunForSession(pluginId: string, sessionId: string): AiRunState | null {
+    const runId = this.activeBySession.get(sessionKey(pluginId, sessionId));
+    if (!runId) return null;
+    const run = this.runs.get(runId);
+    if (!run || isTerminalStatus(run.status)) {
+      this.activeBySession.delete(sessionKey(pluginId, sessionId));
+      return null;
+    }
+    return run;
+  }
+
   markRunning(runId: string) {
     const run = this.runs.get(runId);
     if (!run) return;

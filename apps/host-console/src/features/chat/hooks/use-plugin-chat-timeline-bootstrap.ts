@@ -12,6 +12,11 @@ export type PluginChatBootstrapState = {
   messages: UIMessage[];
 };
 
+function shouldReloadTimelineForSessionUpdate(reason?: string): boolean {
+  if (!reason) return true;
+  return !reason.startsWith("web.");
+}
+
 /**
  * 会话切换时拉 GET .../messages 合并 timeline，供 useChatRuntime initial messages。
  */
@@ -92,6 +97,7 @@ export function usePluginChatTimelineBootstrap(pluginId: string, sessionId: stri
       const ce = ev as CustomEvent<ChatSessionUpdatedDetail>;
       const d = ce.detail;
       if (!d || d.pluginId !== pluginId || d.sessionId !== sessionId) return;
+      if (!shouldReloadTimelineForSessionUpdate(d.reason)) return;
       void reload();
     };
     window.addEventListener(CHAT_SESSION_UPDATED_EVENT, onSessionUpdated as EventListener);

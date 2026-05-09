@@ -6,24 +6,30 @@ import { AppError } from "../core/app-error.js";
 import { ERROR_CODES } from "../core/error-codes.js";
 import { appendChatEvent } from "../repositories/chat-event.repository.js";
 import { getChatSessionState } from "../repositories/chat-session.repository.js";
-import { upsertUiMessage } from "../repositories/plugin-chat.repository.js";
+import { listUiMessages, upsertUiMessage } from "../repositories/plugin-chat.repository.js";
 import type { AiRunProvider } from "../providers/ai-run-provider/index.js";
 import {
   consumeLlmRun,
   createAiRunStreamResponse
 } from "./ai-chat-run-stream.controller.js";
 import { AiChatCommandEnvelope } from "../services/ai-chat/ai-chat-command-envelope.js";
-import { extractLastUserMessage } from "../services/ai-chat/ai-chat-context-window.js";
+import {
+  buildWithContextWindow,
+  extractLastUserMessage,
+  sanitizeMessagesForLlmWindow
+} from "../services/ai-chat/ai-chat-context-window.js";
 import { orchestrateChat } from "../services/ai-chat/ai-chat.service.js";
 import { buildRuntimeDefaultLlmTools } from "../services/ai-chat/ai-chat-runtime-default.js";
 import { validateAiChatBody, type AiChatBody } from "../routes/ai-chat-validation.js";
 import {
-  createTextStreamResponse,
+  createOrchestratedTextStreamResponse,
+  type OrchestratedTextStreamCallbacks,
   sendWebResponse
 } from "./ai-chat-stream-response.controller.js";
 
 type AiChatStreamRequest = FastifyRequest<{ Body: AiChatBody }>;
 type PublishNotificationStream = (input: NotificationStreamInput) => void;
+const WEB_LLM_CONTEXT_LIMIT = 20;
 
 async function loadHostPluginOrThrow(pluginRuntime: PluginRuntimePort, pluginId: string) {
   const row = await pluginRuntime.plugin(pluginId);
@@ -50,6 +56,16 @@ function persistIncomingMessages(pluginId: string, sessionId: string, messages: 
   }
 }
 
+function buildLlmContextMessages(pluginId: string, sessionId: string): UIMessage[] {
+  const history = listUiMessages(pluginId, sessionId, WEB_LLM_CONTEXT_LIMIT);
+  const windowed = sanitizeMessagesForLlmWindow(buildWithContextWindow(history, WEB_LLM_CONTEXT_LIMIT));
+  return windowed.map((message, index) => ({
+    id: `llm-context:${index + 1}`,
+    role: message.role === "assistant" ? "assistant" : "user",
+    parts: [{ type: "text", text: message.content }]
+  }));
+}
+
 export async function handleAiChatStream(
   request: AiChatStreamRequest,
   reply: FastifyReply,
@@ -66,10 +82,12 @@ export async function handleAiChatStream(
   }
 
   const hostPlugin = await loadHostPluginOrThrow(pluginRuntime, pluginId);
-  const messages = body.messages;
-  persistIncomingMessages(pluginId, sessionId, messages, request.id);
+  const incomingMessages = body.messages;
+  persistIncomingMessages(pluginId, sessionId, incomingMessages, request.id);
+  const historyMessages = listUiMessages(pluginId, sessionId, 200);
+  const llmContextMessages = buildLlmContextMessages(pluginId, sessionId);
 
-  const userMessage = extractLastUserMessage(messages);
+  const userMessage = extractLastUserMessage(incomingMessages);
   const state = getChatSessionState(pluginId, sessionId);
   const path = await AiChatCommandEnvelope.handler(state, userMessage, hostPlugin);
 
@@ -103,7 +121,7 @@ export async function handleAiChatStream(
       source: "llm",
       payload: {
         path: path.kind,
-        messageCount: messages.length,
+        messageCount: llmContextMessages.length,
         model: body.model ?? null,
         toolAllowedCount: toolStats.allowedCount,
         toolCandidateCount: toolStats.candidateCount,
@@ -126,7 +144,7 @@ export async function handleAiChatStream(
       pluginId,
       sessionId,
       traceId: request.id,
-      messages,
+      messages: llmContextMessages,
       system: [body.system, pluginSystem, mcpHint].filter(Boolean).join("\n\n"),
       model: body.model,
       tools: llmTools,
@@ -138,29 +156,35 @@ export async function handleAiChatStream(
     return;
   }
 
-  const result = await orchestrateChat({
-    pluginRuntime,
-    plugin: hostPlugin,
-    pluginId,
-    sessionId,
-    messages,
-    model: body.model,
-    traceId: request.id,
-    turnSource: "web",
-    sessionConcurrency: "web_fail_fast",
-    persistMessages: false
-  });
   await sendWebResponse(
     reply,
-    createTextStreamResponse({
-      text: result.reply,
+    createOrchestratedTextStreamResponse({
       pluginId,
       sessionId,
       traceId: request.id,
-      sourceType: result.sourceType,
-      sourcePluginId: result.sourcePluginId,
-      llmEligible: result.llmEligible,
-      contextSummary: result.contextSummary
+      run: async (stream: OrchestratedTextStreamCallbacks) => {
+        const result = await orchestrateChat({
+          pluginRuntime,
+          plugin: hostPlugin,
+          pluginId,
+          sessionId,
+          messages: historyMessages,
+          model: body.model,
+          traceId: request.id,
+          turnSource: "web",
+          sessionConcurrency: "web_fail_fast",
+          persistMessages: false,
+          stream
+        });
+        return {
+          text: result.reply,
+          sourceType: result.sourceType,
+          sourcePluginId: result.sourcePluginId,
+          llmEligible: result.llmEligible,
+          contextSummary: result.contextSummary,
+          skipFinalReplyChunks: result.skipSseFinalReplyChunks
+        };
+      }
     })
   );
 }

@@ -76,11 +76,40 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
     this.pluginRoot = path.dirname(fileURLToPath(import.meta.url));
   }
   async executeTurn(ctx: PluginTurnContext): Promise<PluginTurnHandleResult> {
+    const fetchTopicsTool = "fetch_topics";
+    this.emitToolRunning(ctx, fetchTopicsTool, {
+      content: [this.buildToolOutContent("开始抓取 hot 与 c/news/34 主题列表")]
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    // this.emitToolRunning(ctx, "fetch_topics", {}{
+    //   content: [this.buildToolOutContent("开始抓取主题列表")]
+    // });
+
+    // this.emitToolAvailable(
+    //   ctx,
+    //   "fetch_topics",
+    //   this.buildToolOutput("抓取完成", { count: 2 })
+    // );
+    // 出错
+    this.emitToolError(ctx, "fetch_topics", "抓取失败",{}, {
+      content: [this.buildToolOutContent("抓取失败")]
+    });
+    return toTurnResult("处理完成");
+
     this.emitAssistantDelta(ctx, "开始执行 linux-do-fetch 流程。\n\n");
     try {
       const hotTopics = await this.getTopics(ctx, "hot");
       const newsTopics = await this.getTopics(ctx, "c/news/34");
       const allTopics = [...hotTopics, ...newsTopics];
+      this.emitToolAvailable(
+        ctx,
+        fetchTopicsTool,
+        { phase: "fetch", channels: ["hot", "c/news/34"] },
+        this.buildToolOutput(`主题列表抓取完成，共 ${allTopics.length} 条`, {
+          count: allTopics.length
+        })
+      );
       this.emitAssistantDelta(ctx, `获取到 ${allTopics.length} 个主题\n\n`);
       const rankedTopics = await this.orderTopics(allTopics);
       this.emitAssistantDelta(ctx, `排序后 ${rankedTopics.length} 个主题\n\n`);
@@ -115,6 +144,9 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
           : error instanceof Error
             ? error.message
             : String(error);
+      this.emitToolError(ctx, fetchTopicsTool, msg, {
+        content: [this.buildToolOutContent("主题列表抓取失败")]
+      });
       this.emitAssistantDelta(ctx, `执行失败: ${msg}\n`);
       return toTurnResult(`[linux-do-fetch] 执行失败: ${msg}`);
     } finally {

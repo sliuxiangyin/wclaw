@@ -110,6 +110,16 @@ function textMessage(id: string, role: "user" | "assistant", content: string): U
   };
 }
 
+function normalizeUiMessageId(message: UIMessage, fallbackId: string): UIMessage {
+  if (typeof message.id === "string" && message.id.trim().length > 0) {
+    return message;
+  }
+  return {
+    ...message,
+    id: fallbackId
+  };
+}
+
 export function appendChatMessage(
   pluginId: string,
   sessionId: string,
@@ -148,15 +158,16 @@ export function upsertUiMessage(input: {
   contextSummary?: string | null;
 }) {
   const now = new Date().toISOString();
-  const content = textFromUiMessage(input.message);
   const role = input.message.role === "assistant" ? "assistant" : "user";
+  const message = normalizeUiMessageId(input.message, `${role}:${randomUUID()}`);
+  const content = textFromUiMessage(message);
   upsertStmt.run({
     plugin_id: input.pluginId,
     session_id: input.sessionId,
-    message_id: input.message.id,
+    message_id: message.id,
     trace_id: input.traceId ?? null,
     role,
-    ui_message_json: JSON.stringify(input.message),
+    ui_message_json: JSON.stringify(message),
     content_plain: content,
     source_type: input.sourceType ?? "runtime",
     source_plugin_id: input.sourcePluginId ?? null,
@@ -183,7 +194,9 @@ export function listUiMessages(pluginId: string, sessionId: string, limit = 100)
     try {
       const parsed = JSON.parse(row.ui_message_json) as UIMessage;
       if (parsed && typeof parsed.id === "string" && Array.isArray(parsed.parts)) {
-        messages.push(parsed);
+        const role = parsed.role === "assistant" ? "assistant" : "user";
+        const fallbackId = row.message_id.trim().length > 0 ? row.message_id : `${role}:${row.id}`;
+        messages.push(normalizeUiMessageId(parsed, fallbackId));
       }
     } catch {
       // 忽略损坏行，避免单条历史破坏整个会话加载。

@@ -6,7 +6,11 @@ import {
 import { deleteChatEventsBySession } from "../../repositories/chat-event.repository.js";
 import { deleteChatSessionState } from "../../repositories/chat-session.repository.js";
 import { getPluginConfig } from "../../repositories/plugin-config.repository.js";
-import type { PluginRuntimeExtension, PluginTurnHandleResult } from "@wclaw/plugin-sdk";
+import type {
+  PluginRuntimeExtension,
+  PluginToolLikeStepPayload,
+  PluginTurnHandleResult
+} from "@wclaw/plugin-sdk";
 import type { PluginRuntimePort } from "../../core/plugin-runtime.port.js";
 import type { PluginManifest } from "../plugin-catalog/plugin-catalog.service.js";
 import { assertPluginChatSessionId } from "./plugin-chat-session-guard.js";
@@ -22,6 +26,7 @@ type SendChatInput = {
   manifest: PluginManifest;
   stream?: {
     onTextDelta?: (delta: string) => void;
+    onToolLikeStep?: (step: PluginToolLikeStepPayload) => void;
   };
   /**
    * 为 true 时不写入本条 user / 本轮 assistant reply（由 `orchestrateChat` 统一落库）；
@@ -55,7 +60,8 @@ export async function callExecuteTurn(input: SendChatInput) {
         message,
         config,
         ...(slashArgv ? { argv: slashArgv } : {}),
-        emitAssistantDelta: stream?.onTextDelta
+        emitAssistantDelta: stream?.onTextDelta,
+        emitToolLikeStep: stream?.onToolLikeStep
       })
     )) as PluginTurnHandleResult;
     const parsed = normalizeHandleChatResult(pluginId, raw);
@@ -102,6 +108,7 @@ export async function runPluginCommand(
   sessionIdForTurn: string = `${pluginId}:default`,
   stream?: {
     onTextDelta?: (delta: string) => void;
+    onToolLikeStep?: (step: PluginToolLikeStepPayload) => void;
   }
 ) {
   const config = getPluginConfig(pluginId);
@@ -117,7 +124,8 @@ export async function runPluginCommand(
         message: command,
         config,
         argv: { command: cmd, args },
-        emitAssistantDelta: stream?.onTextDelta
+        emitAssistantDelta: stream?.onTextDelta,
+        emitToolLikeStep: stream?.onToolLikeStep
       })
     );
     const parsed = parseExecuteTurnPayload(output);

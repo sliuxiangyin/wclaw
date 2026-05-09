@@ -7,6 +7,8 @@ import { ERROR_CODES } from "../core/error-codes.js";
 import { ok } from "../core/response.js";
 import { listChatEvents } from "../repositories/chat-event.repository.js";
 import { handleAiChatStream } from "../controllers/ai-chat-stream.controller.js";
+import { createAiRunStreamResponse } from "../controllers/ai-chat-run-stream.controller.js";
+import { sendWebResponse } from "../controllers/ai-chat-stream-response.controller.js";
 import { validateAiChatBody, type AiChatBody } from "./ai-chat-validation.js";
 
 type AiChatEventsQuery = {
@@ -24,6 +26,11 @@ type AiChatCancelBody = {
 
 type PublishNotificationStream = (input: NotificationStreamInput) => void;
 
+function requiredHeaderString(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
 export async function registerAiChatRoutes(
   app: FastifyInstance,
   pluginRuntime: PluginRuntimePort,
@@ -36,6 +43,20 @@ export async function registerAiChatRoutes(
       sessionId: request.headers["x-wclaw-session-id"]
     });
     await handleAiChatStream(request, reply, pluginRuntime, aiRunProvider, publishNotification);
+  });
+
+  app.get("/api/ai/chat/resume-stream", async (request, reply) => {
+    const pluginId = requiredHeaderString(request.headers["x-wclaw-plugin-id"]);
+    const sessionId = requiredHeaderString(request.headers["x-wclaw-session-id"]);
+    if (!pluginId || !sessionId) {
+      throw new AppError(ERROR_CODES.INVALID_REQUEST, "pluginId and sessionId are required", 400);
+    }
+    const run = aiRunProvider.getActiveRunForSession(pluginId, sessionId);
+    if (!run) {
+      reply.status(204).send();
+      return;
+    }
+    await sendWebResponse(reply, createAiRunStreamResponse(aiRunProvider, run.runId));
   });
 
   app.post<{ Body: AiChatCancelBody }>("/api/ai/chat/cancel", async (request) => {

@@ -4,7 +4,9 @@
 
 ## 目标
 
-- 前端、后端、LLM、MCP 工具、持久化统一使用 AI SDK v6 的 `UIMessage` / `UIMessage.parts` 语义。
+- 前端展示、后端持久化、流式输出统一使用 AI SDK v6 的 `UIMessage` / `UIMessage.parts` 语义。
+- 前端提交请求只发送本轮最新 user `UIMessage`；历史上下文由后端以数据库为权威重建。
+- LLM 输入使用后端构造的轻量 `UIMessage[]` 上下文，不直接复用前端 UI 展示历史载荷。
 - 工具调用必须作为 AI SDK tool part 进入流和历史，禁止伪造成 assistant 文本。
 - 用户可见消息与审计事件分离：`plugin_chat_ui_messages` 保存 UI 消息，`chat_events` 保存排障/审计事件。
 - 前端只消费 assistant-ui runtime 的标准消息流，不手写 `UIMessageChunk` 生命周期。
@@ -15,17 +17,21 @@
 flowchart LR
   User[User] --> Console[Ai05 assistant-ui]
   Console --> Transport[PluginChatTransport]
-  Transport -->|"POST /api/ai/chat UIMessage[]"| Route[ai-chat.routes]
+  Transport -->|"POST /api/ai/chat latest user UIMessage[]"| Route[ai-chat.routes]
   Route --> Controller[handleAiChatStream]
   Controller --> StoreUser[upsertUiMessage user]
+  Controller --> DbHistory[listUiMessages]
+  DbHistory --> LlmContext[lightweight LLM UIMessage window]
   Controller --> Router[AiChatCommandEnvelope]
   Router --> LlmRuntime[streamUiMessagesWithConfiguredLlm]
+  LlmContext --> LlmRuntime
   LlmRuntime -->|"convertToModelMessages"| AiSdk[streamText]
   AiSdk --> Tools[MCP tools as AI SDK ToolSet]
   Tools --> Gateway[MCP Gateway]
   AiSdk -->|"toUIMessageStreamResponse"| Transport
   Controller --> StoreAssistant[upsertUiMessage assistant]
   Controller --> Events[chat_events]
+  Transport -->|"GET /api/ai/chat/resume-stream"| Resume[resume active AiRun stream]
 ```
 
 ## 每一步执行文件与职责
@@ -38,8 +44,9 @@ flowchart LR
 
 - `Ai05()`
   - 创建 `PluginChatTransport`。
-  - 调用 `useChatRuntime({ transport, messages, onFinish })`。
+  - 调用 `useChatRuntime({ transport, messages, resume: true, onFinish })`。
   - 通过 `AssistantRuntimeProvider` 把 runtime 提供给 assistant-ui primitives。
+  - 页面刷新后由 assistant-ui `resumeStream` 尝试恢复当前会话仍在运行的回答。
 - `Ai05Composer()`
   - 维护输入框。
   - 调用 `aui.composer().setText()` 与 `aui.composer().send()` 进入 assistant-ui 发送管线。
@@ -65,6 +72,12 @@ flowchart LR
   - 通过请求头传递：
     - `X-Wclaw-Plugin-Id`
     - `X-Wclaw-Session-Id`
+  - `prepareSendMessagesRequest`
+    - 保留 AI SDK 标准字段：`id`、`trigger`、`messageId`、`metadata`。
+    - 将 `messages` 裁剪为**最后一条 user `UIMessage`**，避免把完整历史、工具调用、浏览器 snapshot 反复发给后端。
+  - `prepareReconnectToStreamRequest`
+    - 指向 `${VITE_API_BASE_URL}/api/ai/chat/resume-stream`。
+    - 用同一组 header 按当前 `pluginId + sessionId` 恢复 active run。
   - 流解析、取消、消息格式由 `AssistantChatTransport` 与 AI SDK 处理。
 
 要求：
@@ -72,6 +85,7 @@ flowchart LR
 - 禁止恢复 `POST /api/ai/runs` + `GET /api/ai/runs/:id/stream` 的自定义双请求模式。
 - 禁止在前端实现 `parseSseBlock`、`toUiMessageChunk`、断线补 `finish` 等逻辑。
 - 若需要新增请求参数，优先使用请求 body 中的标准字段或明确的 header，不修改 `UIMessage` 结构。
+- 禁止把当前线程完整 `messages` 历史直接作为提交载荷发给后端；提交载荷只允许包含本轮最新 user 消息。
 
 ### 3. 历史加载
 
@@ -88,6 +102,8 @@ flowchart LR
   - 调用 `getPluginChatHistoryTimeline()`。
   - 直接接收后端返回的 `UIMessage[]`。
   - 不再经过 `timelineToUiBootstrap`。
+  - 收到 `chat.session.updated` 时仅对非 `web.*` reason 重拉历史。
+  - `web.llm.completed`、`web.llm.cancelled`、`web.llm.failed` 不触发历史重拉，因为当前 assistant-ui runtime 已持有本轮流式消息。
 - 后端 `getPluginChatHistoryTimeline()`
   - 校验 session。
   - 调用 `listUiMessages()`。
@@ -100,6 +116,7 @@ flowchart LR
 - 历史恢复的唯一权威数据源是 `ui_message_json`。
 - 禁止从 `content + activity chunks` replay 出 `parts`。
 - 禁止让 `chat_events` 参与 UIMessage 重建。
+- 外部进线、调度进线等非当前 Web runtime 产生的更新仍应通过 `chat.session.updated` 触发 timeline reload。
 
 ### 4. 路由入口
 
@@ -109,6 +126,11 @@ flowchart LR
 
 - `registerAiChatRoutes()`
   - 注册 `POST /api/ai/chat`。
+  - 注册 `GET /api/ai/chat/resume-stream`。
+    - 按 header 中的 `pluginId + sessionId` 查找当前 active AI run。
+    - 有 active run 时返回同一 AI SDK UIMessage stream。
+    - 无 active run 时返回 `204`，前端静默继续展示历史。
+  - 注册 `POST /api/ai/chat/cancel`。
   - 调用 `validateAiChatBody()`。
   - 把流式处理委托给 `handleAiChatStream()`。
   - 注册 `GET /api/ai/events` 供审计查询。
@@ -118,6 +140,7 @@ flowchart LR
 - routes 只做路由映射、基础校验和响应包装。
 - 不在 routes 中写 LLM、MCP、持久化或流式拼装逻辑。
 - `POST /api/ai/chat` 是管理台 Chat 主入口，不再新增并行主入口。
+- `resume-stream` 只能恢复内存中仍处于非终态的 active run；已完成、失败、取消的 run 由历史接口展示落库结果。
 
 ### 5. 请求校验
 
@@ -133,6 +156,8 @@ flowchart LR
 要求：
 
 - 后端入口接收标准 `UIMessage[]`，不得要求前端额外提供扁平 `content`。
+- 管理台提交请求中的 `messages` 语义是“本轮新提交消息”，不是完整历史。
+- 后端不得信任前端提交的完整历史作为 LLM 上下文；上下文必须从宿主库读取并裁剪。
 - 若新增自定义 data part，必须先定义类型与转换策略，再调整校验。
 
 ### 6. Chat 流控制器
@@ -143,30 +168,45 @@ flowchart LR
 
 - `handleAiChatStream(request, reply, pluginRuntime)`
   - 从 header/body 解析 `pluginId` 与 `sessionId`。
-  - 调用 `persistIncomingMessages()` 保存本轮已提交的 user/assistant 历史。
+  - 调用 `persistIncomingMessages()` 保存本轮已提交的 user 历史。
+  - 调用 `listUiMessages(pluginId, sessionId, 200)` 获取后端权威历史，供非默认 LLM 编排路径使用。
+  - 调用 `buildLlmContextMessages()` 获取默认 LLM 路径的轻量上下文：
+    - 从 `plugin_chat_ui_messages` 读取最近历史。
+    - `buildWithContextWindow()` 裁剪窗口。
+    - `sanitizeMessagesForLlmWindow()` 移除旧工具伪文本痕迹。
+    - 只构造 `text` part，不把历史 tool/snapshot/data part 直接送入 LLM。
   - 用 `extractLastUserMessage()` 读取本轮用户文本，用于命令路由判别。
   - 调用 `AiChatCommandEnvelope.handler()` 选择编排路径。
   - 默认 LLM 路径：
     - 构造 MCP `ToolSet`。
-    - 调用 `streamUiMessagesWithConfiguredLlm()`。
-    - 使用 `result.toUIMessageStreamResponse({ originalMessages, onFinish })` 返回标准流。
-    - `onFinish` 保存完整 assistant `UIMessage`。
+    - 通过 `AiRunProvider.createRun()` 创建会话级 active run；同会话已有未结束 Web run 时返回 busy。
+    - 后台 `consumeLlmRun()` 执行 LLM，并把 AI SDK `UIMessageChunk` 写入 run buffer。
+    - HTTP 响应通过 `createAiRunStreamResponse()` 订阅 run buffer。
+    - 使用后端构造的轻量 `llmContextMessages` 调用 `streamUiMessagesWithConfiguredLlm()`。
+    - `consumeLlmRun()` 内部使用 `result.toUIMessageStream({ originalMessages, onFinish })`。
+    - `onFinish` 保存完整 assistant `UIMessage`，并发送 `chat.session.updated`。
   - 非默认 LLM 路径：
     - 调用 `orchestrateChat()`。
-    - 用 `createTextStreamResponse()` 生成标准文本流。
+    - 用 `createOrchestratedTextStreamResponse()` 生成标准文本流。
+    - 传入 `stream.onTextDelta`，把插件 `emitAssistantDelta(delta)` 收敛为 AI SDK `text-delta`。
+    - 流式 delta 与最终补全文本共同组成当前 assistant `UIMessage` 的 text part 并落库。
 
-中断处理：
+停止、断线与恢复：
 
-- `request.raw.on("close")` 触发 `AbortController.abort()`，传给 `streamText`。
+- 浏览器连接断开只取消当前 HTTP 订阅，不取消后台 LLM run。
+- 页面刷新后，前端通过 `GET /api/ai/chat/resume-stream` 重新订阅当前会话 active run。
+- 用户点击停止时调用 `POST /api/ai/chat/cancel`，由 `AiRunProvider.cancelSession()` 触发 `AbortController.abort()`，再传给 `streamText`。
 - `onFinish` 即使 `isAborted=true`，只要已有可保存的 `responseMessage.parts`，也必须落库。
 - 中断落库消息需带 `metadata.cancelled = true`。
 - 中断审计事件写为 `chat.response.cancelled`。
 
 要求：
 
-- 不手写 `text-start` / `text-delta` / `finish` 的 LLM 主路径，LLM 主路径由 `toUIMessageStreamResponse()` 生成。
-- 只有非 LLM/同步文本结果可以用 `createTextStreamResponse()` 转成最小标准流。
+- 不手写 `text-start` / `text-delta` / `finish` 的 LLM 主路径，LLM 主路径由 AI SDK `toUIMessageStream()` 生成 chunk，再由 `AiRunProvider` 转发。
+- 只有非 LLM/同步文本结果可以用 `createTextStreamResponse()` / `createOrchestratedTextStreamResponse()` 转成最小标准流。
+- 插件 `emitAssistantDelta` 只能发助手正文纯文本 delta；宿主负责映射为标准 text part，插件不得接触 `UIMessageChunk`。
 - 不把工具结果写成 `[tool ...] success` 文本。
+- 不把前端提交载荷里的历史工具 parts 作为 LLM 上下文来源。
 
 ### 7. 流响应辅助
 
@@ -183,6 +223,10 @@ flowchart LR
 - `createTextStreamResponse()`
   - 将普通文本结果转为最小 AI SDK UIMessage stream。
   - 同时保存对应 assistant `UIMessage`。
+- `createOrchestratedTextStreamResponse()`
+  - 包裹非默认 LLM 编排路径。
+  - 将 `orchestrateChat().stream.onTextDelta` 输出映射为标准 `text-delta`。
+  - 累积实际写出的文本，保存为 assistant `UIMessage.parts[{ type: "text" }]`。
 - `hasPersistableParts()`
   - 判断中断/完成时是否有可保存内容。
 - `withCancelledMetadata()`
@@ -204,9 +248,10 @@ flowchart LR
 - `streamUiMessagesWithConfiguredLlm(input)`
   - 读取 LLM 配置。
   - 合并全局 `systemPrompt` 与本轮 `system`。
+  - 接收的 `input.messages` 应是控制器或编排层构造后的 LLM 窗口，而不是前端提交的完整 UI 历史。
   - 调用 `await convertToModelMessages(input.messages)`。
   - 调用 `streamText({ model, system, messages, tools, stopWhen, abortSignal })`。
-  - 返回 `streamText` result，由控制器调用 `toUIMessageStreamResponse()`。
+  - 返回 `streamText` result，由 `consumeLlmRun()` 转为 `UIMessageChunk` 并写入 `AiRunProvider`。
 - `generateWithConfiguredLlm()` / `streamWithConfiguredLlm()`
   - 兼容非标准旧调用路径或插件命令路径。
   - 新的管理台 Chat 主路径不得优先使用这两个扁平文本接口。
@@ -215,6 +260,7 @@ flowchart LR
 
 - 管理台主路径必须使用 `streamUiMessagesWithConfiguredLlm()`。
 - LLM 上下文转换必须使用 `convertToModelMessages(UIMessage[])`。
+- LLM 上下文应由后端从 `plugin_chat_ui_messages` 读取后裁剪生成，禁止直接使用前端提交 payload 作为上下文。
 - 多步工具调用必须设置 `stopWhen: stepCountIs(maxSteps)`。
 - `abortSignal` 必须传入 `streamText`。
 
@@ -269,8 +315,10 @@ flowchart LR
   - 保存完整 `UIMessage`。
   - `ui_message_json` 是权威展示与恢复数据。
   - `content_plain` 只作派生缓存。
+  - 若传入 `UIMessage.id` 为空，仓储层必须生成非空稳定 id，避免 assistant-ui 消息链断裂。
 - `listUiMessages()`
   - 按会话读取历史并解析 `UIMessage[]`。
+  - 兼容旧数据中的空 id，返回前补 fallback id。
 - `deleteAllChatMessagesForSession()`
   - 清理当前会话消息。
 - `appendChatMessage()`
@@ -281,25 +329,36 @@ flowchart LR
 - 禁止恢复 `plugin_chat_messages` 纯文本表作为主消息表。
 - 禁止恢复 `plugin_chat_activity` 作为 UI replay 权威数据源。
 - `chat_events` 只做审计，不进入 LLM messages。
+- 前端提交 payload 不是历史权威；历史权威始终是 `plugin_chat_ui_messages.ui_message_json`。
 - 数据库变更可以 breaking，但必须同步 repository 和历史加载 API。
 
 ## 最佳实践
 
-- **协议单一**：前后端只传 `UIMessage[]`；不要再发 `{ role, content, tool-context }` 这类自定义上下文格式。
+- **提交轻量**：前端提交只发送本轮最新 user `UIMessage`；不要把完整 thread 历史、tool parts、浏览器 snapshot 作为请求载荷。
+- **展示完整**：历史接口仍返回完整 `UIMessage[]`，供 assistant-ui 恢复文本、reasoning、tool 输入和 tool 输出展示。
+- **上下文后端化**：LLM 上下文由后端从 `plugin_chat_ui_messages` 读取、裁剪、过滤、再转换为轻量 `UIMessage[]`。
+- **协议单一**：流式输出、历史展示、持久化仍以 `UIMessage` 为标准；不要再发 `{ role, content, tool-context }` 这类自定义上下文格式。
 - **工具结构化**：工具调用、工具输入、工具输出必须保留为 AI SDK tool part。
 - **文本只展示**：`content_plain`、`textFromUiMessage()` 只用于摘要、列表、审计，不作为重新构造 LLM 上下文的权威来源。
-- **持久化最终消息**：assistant 消息在 `toUIMessageStreamResponse().onFinish` 中保存；中断时也保存已有 partial message。
+- **持久化最终消息**：assistant 消息在 `toUIMessageStream().onFinish` 中保存；中断时也保存已有 partial message。
 - **审计旁路**：`chat_events` 可以记录 `chat.llm.called`、`chat.response.completed`、`chat.response.cancelled`，但不能被拼回 `UIMessage.parts`。
-- **取消传递**：前端停止或连接断开必须传到后端 `AbortController`，再传到 `streamText`。
+- **断线恢复**：刷新页面后通过 `GET /api/ai/chat/resume-stream` 恢复当前会话仍在运行的 active run；无 active run 返回 `204`。
+- **避免无效重拉**：当前 Web runtime 完成后发出的 `web.*` `chat.session.updated` 不触发 timeline reload；外部进线仍触发 reload。
+- **取消传递**：前端停止必须传到后端 `AbortController`，再传到 `streamText`；普通连接断开只断开订阅，便于刷新后恢复。
+- **插件文本收敛**：插件 `emitAssistantDelta(delta)` 只作为助手正文文本增量入口，宿主把它映射到主 Chat 的 AI SDK text part；插件 activity、tool、notification 不得混入该接口。
 - **CORS 注意**：凡是使用 `reply.hijack()` 桥接 Web Response，必须显式补 CORS 响应头。
 - **分层约束**：routes 保持薄层；controllers 负责 HTTP 编排；services 负责业务；repositories 负责 SQLite。
 
 ## 禁止事项
 
 - 禁止新增或恢复 `POST /api/ai/runs`、`GET /api/ai/runs/:runId/stream` 作为管理台 Chat 主路径。
-- 禁止手写 AI SDK 生命周期 chunk：`start`、`text-start`、`text-delta`、`finish-step`、`finish`，除非是在非 LLM 文本结果的最小桥接函数内。
+- 禁止手写 AI SDK 生命周期 chunk：`start`、`text-start`、`text-delta`、`finish-step`、`finish`，除非是在非 LLM 文本结果的最小桥接函数或 run buffer 转发中。
 - 禁止在前端手动解析 SSE 并强转 `UIMessageChunk`。
+- 禁止前端把完整 assistant-ui thread history 作为 `/api/ai/chat` 提交 payload。
+- 禁止后端把前端提交 payload 当作 LLM 历史权威。
 - 禁止把工具结果写成 `[tool xxx] success: ...` 后喂回 LLM。
+- 禁止把浏览器 snapshot、tool result、reasoning 等历史 UI parts 原样塞进下一轮 LLM 输入。
+- 禁止插件向 `emitAssistantDelta` 传结构化事件、工具结果对象、通知 payload 或任何非纯文本 delta。
 - 禁止从 `chat_events` 或旧 activity 表恢复 assistant-ui 消息。
 - 禁止在 host-console 中按 `pluginId === "weixin-bridge"` 等方式特判 UI/欢迎语/工具展示。
 - 禁止在 services 中值导入 providers；需要实例时从组合根显式传入端口。
@@ -309,12 +368,16 @@ flowchart LR
 修改 Chat 主链路时必须检查：
 
 - `apps/host-console/src/features/chat/runtime/plugin-chat-transport.ts` 是否仍使用 `AssistantChatTransport`。
+- `apps/host-console/src/features/chat/runtime/plugin-chat-transport.ts` 是否仍只提交最后一条 user `UIMessage`，并保留 AI SDK 标准字段。
 - `apps/host-api/src/routes/ai-chat.routes.ts` 是否仍只委托 `handleAiChatStream()`。
-- `apps/host-api/src/controllers/ai-chat-stream.controller.ts` 是否仍在 `onFinish` 保存 assistant `UIMessage`。
+- `apps/host-api/src/routes/ai-chat.routes.ts` 是否保留 `GET /api/ai/chat/resume-stream` 的 `204` 降级语义。
+- `apps/host-api/src/controllers/ai-chat-run-stream.controller.ts` 是否仍在 `onFinish` 保存 assistant `UIMessage`。
+- `apps/host-api/src/controllers/ai-chat-stream.controller.ts` 是否仍通过 `AiRunProvider` 创建后台 run 并返回订阅流。
+- `apps/host-api/src/controllers/ai-chat-stream.controller.ts` 是否从数据库构造 LLM 上下文，而不是复用前端完整载荷。
 - `apps/host-api/src/services/llm/llm-runtime.service.ts` 主路径是否仍使用 `convertToModelMessages()`。
 - `apps/host-api/src/services/ai-chat/ai-chat-runtime-default.ts` MCP 是否仍作为 AI SDK `ToolSet` 注入。
 - `apps/host-api/src/repositories/plugin-chat.repository.ts` 是否仍以 `ui_message_json` 为权威。
-- `apps/host-console/src/features/chat/hooks/use-plugin-chat-timeline-bootstrap.ts` 是否直接加载 `UIMessage[]`。
+- `apps/host-console/src/features/chat/hooks/use-plugin-chat-timeline-bootstrap.ts` 是否直接加载 `UIMessage[]`，且跳过 `web.*` 完成通知导致的无意义重拉。
 
 验证命令：
 
@@ -327,7 +390,10 @@ pnpm lint:arch
 手工验收：
 
 - 多轮浏览器/MCP 工具调用后，下一轮 LLM 请求中不应出现 `[tool ...] success` 这类伪工具文本。
+- 多轮浏览器/MCP 工具调用后，`POST /api/ai/chat` 请求体中 `messages` 应只包含本轮最新 user 消息。
+- 多轮浏览器/MCP 工具调用后，下一轮 LLM 输入应来自后端裁剪窗口，不应包含历史浏览器 snapshot/tool result 原始大对象。
 - 刷新页面后，历史消息应能通过 `UIMessage.parts` 恢复文本、reasoning、tool 输入和 tool 输出。
+- 刷新页面且上一轮仍在运行时，应通过 `GET /api/ai/chat/resume-stream` 继续接收未完成回答；无 active run 时应返回 `204` 且 UI 不报错。
 - 点击停止后，已有 assistant partial 回复应落库，并带 `metadata.cancelled=true`。
 - CORS 预检与流式响应都应允许 `http://localhost:5173` 调用 `http://localhost:8787/api/ai/chat`。
 

@@ -90,26 +90,47 @@ const statusIconMap: Record<ToolStatus, React.ElementType> = {
   "requires-action": AlertCircleIcon,
 };
 
+function getResultErrorText(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const candidate = (result as { isError?: unknown; content?: unknown }).isError;
+  if (candidate !== true) return null;
+  const content = (result as { content?: unknown }).content;
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      if (!item || typeof item !== "object") continue;
+      const text = (item as { type?: unknown; text?: unknown }).text;
+      const type = (item as { type?: unknown }).type;
+      if (type === "text" && typeof text === "string" && text.trim()) return text;
+    }
+  }
+  return "Tool execution failed";
+}
+
 function ToolFallbackTrigger({
   toolName,
   status,
+  result,
   className,
   ...props
 }: React.ComponentProps<typeof CollapsibleTrigger> & {
   toolName: string;
   status?: ToolCallMessagePartStatus;
+  result?: unknown;
 }) {
-  const statusType = status?.type ?? "complete";
+  const resultErrorText = getResultErrorText(result);
+  const hasResultError = !!resultErrorText;
+  const statusType: ToolStatus = hasResultError ? "incomplete" : (status?.type ?? "complete");
   const isRunning = statusType === "running";
   const isCancelled =
     status?.type === "incomplete" && status.reason === "cancelled";
-  const isError =
-    status?.type === "incomplete" &&
-    status.reason === "error" &&
-    !isCancelled;
+  const isFailed = hasResultError || (statusType === "incomplete" && !isCancelled);
 
   const Icon = statusIconMap[statusType];
-  const label = isCancelled ? "Cancelled tool" : isError ? "Error tool" : "Used tool";
+  const label = isCancelled
+    ? "Cancelled tool"
+    : isFailed
+      ? "Failed tool"
+      : "Used tool";
 
   return (
     <CollapsibleTrigger
@@ -125,7 +146,7 @@ function ToolFallbackTrigger({
         className={cn(
           "aui-tool-fallback-trigger-icon size-4 shrink-0",
           isCancelled && "text-muted-foreground",
-          isError && "text-destructive",
+          isFailed && "text-red-500",
           isRunning && "animate-spin",
         )}
       />
@@ -134,7 +155,6 @@ function ToolFallbackTrigger({
         className={cn(
           "aui-tool-fallback-trigger-label-wrapper relative inline-block grow text-start leading-none",
           isCancelled && "text-muted-foreground line-through",
-          isError && "text-destructive",
         )}
       >
         <span>
@@ -239,23 +259,26 @@ function ToolFallbackResult({
 
 function ToolFallbackError({
   status,
+  result,
   className,
   ...props
 }: React.ComponentProps<"div"> & {
   status?: ToolCallMessagePartStatus;
+  result?: unknown;
 }) {
-  if (status?.type !== "incomplete") return null;
-
-  const error = status.error;
-  const errorText = error
-    ? typeof error === "string"
-      ? error
-      : JSON.stringify(error)
-    : null;
-
+  const resultErrorText = getResultErrorText(result);
+  const statusError =
+    status?.type === "incomplete"
+      ? status.error
+        ? typeof status.error === "string"
+          ? status.error
+          : JSON.stringify(status.error)
+        : null
+      : null;
+  const errorText = statusError ?? resultErrorText;
   if (!errorText) return null;
 
-  const isCancelled = status.reason === "cancelled";
+  const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
   const headerText = isCancelled ? "Cancelled reason:" : "Error:";
 
   return (
@@ -264,39 +287,55 @@ function ToolFallbackError({
       className={cn("aui-tool-fallback-error px-4", className)}
       {...props}
     >
-      <p className="aui-tool-fallback-error-header font-semibold text-muted-foreground">
+      <p
+        className={cn(
+          "aui-tool-fallback-error-header font-semibold",
+          isCancelled ? "text-muted-foreground" : "text-red-500",
+        )}
+      >
         {headerText}
       </p>
-      <p className="aui-tool-fallback-error-reason text-muted-foreground">
+      <p
+        className={cn(
+          "aui-tool-fallback-error-reason",
+          isCancelled ? "text-muted-foreground" : "text-red-500/90",
+        )}
+      >
         {errorText}
       </p>
     </div>
   );
 }
 
-const ToolFallbackImpl: ToolCallMessagePartComponent = ({
+type ToolFallbackImplProps = {
+  toolName: string;
+  argsText?: string;
+  result?: unknown;
+  status?: ToolCallMessagePartStatus;
+  [key: string]: unknown;
+};
+
+const ToolFallbackImpl = ({
   toolName,
   argsText,
   result,
   status,
-}) => {
+}: ToolFallbackImplProps) => {
   const isCancelled =
     status?.type === "incomplete" && status.reason === "cancelled";
-  const isError =
-    status?.type === "incomplete" &&
-    status.reason === "error" &&
-    !isCancelled;
+  const hasResultError = !!getResultErrorText(result);
+  const isFailed = hasResultError || (status?.type === "incomplete" && !isCancelled);
 
   return (
     <ToolFallbackRoot
       className={cn(
         isCancelled && "border-muted-foreground/30 bg-muted/30",
-        isError && "border-destructive/40 bg-destructive/5",
+        isFailed && "border-red-500/40 bg-red-500/5",
       )}
     >
-      <ToolFallbackTrigger toolName={toolName} status={status} />
+      <ToolFallbackTrigger toolName={toolName} status={status} result={result} />
       <ToolFallbackContent>
-        <ToolFallbackError status={status} />
+        <ToolFallbackError status={status} result={result} />
         <ToolFallbackArgs
           argsText={argsText}
           className={cn(isCancelled && "opacity-60")}
@@ -309,7 +348,8 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
 
 const ToolFallback = memo(
   ToolFallbackImpl,
-) as unknown as ToolCallMessagePartComponent & {
+) as unknown as React.FC<ToolFallbackImplProps> & {
+  displayName?: string;
   Root: typeof ToolFallbackRoot;
   Trigger: typeof ToolFallbackTrigger;
   Content: typeof ToolFallbackContent;

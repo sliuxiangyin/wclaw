@@ -18,6 +18,9 @@ export type {
   PluginScheduledTask,
   PluginScheduledTaskContext,
   PluginSessionRow,
+  PluginToolLikeStepEmitter,
+  PluginToolLikeStepPayload,
+  PluginToolLikeStepState,
   PluginTurnContext,
   PluginTurnHandleResult
 } from "./runtime-contract.js";

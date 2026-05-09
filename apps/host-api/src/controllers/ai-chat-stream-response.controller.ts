@@ -1,8 +1,87 @@
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import type { FastifyReply } from "fastify";
-import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from "ai";
+import { createUIMessageStream, createUIMessageStreamResponse, UIMessageStreamWriter, type UIMessage } from "ai";
+import type { PluginToolLikeStepPayload } from "@wclaw/plugin-sdk";
 import { upsertUiMessage } from "../repositories/plugin-chat.repository.js";
+
+export type OrchestratedTextStreamCallbacks = {
+  onStart?: (meta: { sourceType: "runtime" | "plugin"; sourcePluginId: string | null }) => void;
+  onTextDelta?: (delta: string) => void;
+  onToolLikeStep?: (step: PluginToolLikeStepPayload) => void;
+};
+
+type StreamingTextResult = {
+  text: string;
+  sourceType?: "runtime" | "plugin";
+  sourcePluginId?: string | null;
+  llmEligible?: boolean;
+  contextSummary?: string | null;
+  skipFinalReplyChunks?: boolean;
+};
+
+type ToolLikePart =
+  | {
+      type: "dynamic-tool";
+      toolName: string;
+      toolCallId: string;
+      state: "input-available";
+      input: unknown;
+      output: unknown;
+    }
+  | {
+      type: "dynamic-tool";
+      toolName: string;
+      toolCallId: string;
+      state: "output-available";
+      input: unknown;
+      output: unknown;
+    }
+  | {
+      type: "dynamic-tool";
+      toolName: string;
+      toolCallId: string;
+      state: "output-error";
+      input: unknown;
+      output: unknown;
+      errorText: string;
+    };
+
+function toToolLikePart(step: PluginToolLikeStepPayload): ToolLikePart {
+  const rawName = step.toolName;
+  const toolCallId = step.stepId ?? `plugin-step:${randomUUID()}`;
+  const input = step.input ?? {};
+  const output = step.output ?? {};
+  if (step.state === "output-error") {
+    return {
+      type: "dynamic-tool",
+      toolName: rawName,
+      toolCallId,
+      state: "output-error",
+      input,
+      output,
+      errorText: step.errorText ?? "plugin step error"
+    };
+  }
+  if (step.state === "output-available") {
+    return {
+      type: "dynamic-tool",
+      toolName: rawName,
+      toolCallId,
+      state: "output-available",
+      input,
+      output
+    };
+  }
+  return {
+    type: "dynamic-tool",
+    toolName: rawName,
+    toolCallId,
+    state: "input-available",
+    input,
+    output
+  };
+}
 
 export function textFromUiMessage(message: UIMessage): string {
   return (message.parts ?? [])
@@ -76,6 +155,100 @@ export function createTextStreamResponse(input: {
         writer.write({ type: "text-start", id: textId });
         writer.write({ type: "text-delta", id: textId, delta: input.text });
         writer.write({ type: "text-end", id: textId });
+      }
+    })
+  });
+}
+
+export function createOrchestratedTextStreamResponse(input: {
+  pluginId: string;
+  sessionId: string;
+  traceId: string;
+  run: (stream: OrchestratedTextStreamCallbacks) => Promise<StreamingTextResult>;
+}) {
+  return createUIMessageStreamResponse({
+    stream: createUIMessageStream({
+      async execute({ writer }) {
+        const textId = "text-1";
+        let textStarted = false;
+        let visibleText = "";
+        const toolLikeParts: ToolLikePart[] = [];
+        const startedToolCalls = new Set<string>();
+        const ensureTextStart = () => {
+          if (textStarted) return;
+          writer.write({ type: "text-start", id: textId });
+          textStarted = true;
+        };
+        const result = await input.run({
+          onStart: () => {
+            ensureTextStart();
+          },
+          onTextDelta: (delta) => {
+            if (delta.length === 0) return;
+            ensureTextStart();
+            visibleText += delta;
+            writer.write({ type: "text-delta", id: textId, delta });
+          },
+          onToolLikeStep: (step) => {
+            const part = toToolLikePart(step);
+            toolLikeParts.push(part);
+            if (!startedToolCalls.has(part.toolCallId)) {
+              writer.write({
+                type: "tool-input-start",
+                toolCallId: part.toolCallId,
+                toolName: part.toolName
+              });
+              writer.write({
+                type: "tool-input-available",
+                toolCallId: part.toolCallId,
+                toolName: part.toolName,
+                input: part.input,
+              });
+              startedToolCalls.add(part.toolCallId);
+            }
+            if (part.state === "output-available") {
+              writer.write({
+                type: "tool-output-available",
+                toolCallId: part.toolCallId,
+                output: part.output
+              });
+            } else if (part.state === "output-error") {
+              writer.write({
+                type: "tool-output-error",
+                toolCallId: part.toolCallId,
+                errorText: part.errorText
+              });
+            }
+          }
+        });
+        ensureTextStart();
+        if (!result.skipFinalReplyChunks && result.text.length > 0) {
+          visibleText += result.text;
+          writer.write({ type: "text-delta", id: textId, delta: result.text });
+        }
+        writer.write({ type: "text-end", id: textId });
+        const assistantMessage: UIMessage = {
+          id: `assistant:${randomUUID()}`,
+          role: "assistant",
+          metadata: {
+            source:
+              result.sourceType === "plugin" && result.sourcePluginId ? `plugin:${result.sourcePluginId}` : "runtime"
+          },
+          parts: [
+            { type: "text", text: visibleText },
+            ...(toolLikeParts as unknown as UIMessage["parts"])
+          ]
+        };
+        upsertUiMessage({
+          pluginId: input.pluginId,
+          sessionId: input.sessionId,
+          message: assistantMessage,
+          traceId: input.traceId,
+          sourceType: result.sourceType,
+          sourcePluginId: result.sourcePluginId,
+          llmEligible: result.llmEligible,
+          contextSummary: result.contextSummary
+        });
       }
     })
   });

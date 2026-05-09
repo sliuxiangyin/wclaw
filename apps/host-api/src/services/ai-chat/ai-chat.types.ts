@@ -1,4 +1,4 @@
-import { PluginExecuteCompletedInput } from "@wclaw/plugin-sdk";
+import type { PluginExecuteCompletedInput, PluginToolLikeStepPayload } from "@wclaw/plugin-sdk";
 import type { UIMessage } from "ai";
 import type { PluginRuntimePort } from "../../core/plugin-runtime.port.js";
 import type { ChatSessionState } from "../../repositories/chat-session.repository.js";
@@ -14,6 +14,7 @@ export type UiChatMessage = UIMessage & {
 export type AiChatStreamCallbacks = {
   onStart?: (meta: { sourceType: "runtime" | "plugin"; sourcePluginId: string | null }) => void;
   onTextDelta?: (delta: string) => void;
+  onToolLikeStep?: (step: PluginToolLikeStepPayload) => void;
   /** 透传 LLM 结构化 chunk（reasoning/tool/source 等）到 SSE */
   onLlmChunk?: (chunk: Record<string, unknown> & { type: string }) => void;
 };

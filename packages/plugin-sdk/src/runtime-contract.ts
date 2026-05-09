@@ -51,6 +51,39 @@ export type PluginHostPublishInput = {
 };
 
 /**
+ * 插件向当前 Chat 主回复追加助手正文增量的窄接口。
+ *
+ * 约束：
+ * - 仅传纯文本 delta，不传 UIMessageChunk、tool、activity、notification 等结构。
+ * - 宿主负责把文本 delta 映射到 Chat 主路的 AI SDK text part。
+ * - 非助手正文进度应走宿主事件/通知能力，不应塞进该接口。
+ */
+export type PluginAssistantDeltaEmitter = (delta: string) => void;
+
+/** 插件步骤状态（与 ToolFallback 兼容的最小状态集）。 */
+export type PluginToolLikeStepState = "running" | "output-available" | "output-error";
+
+/**
+ * 插件工具风格步骤：用于 UI 展示执行进度，不进入 LLM 上下文。
+ * - `toolName`：展示名称（ToolFallback 的 toolName）。
+ * - `state/result/errorText`：与现有 ToolFallback 解析逻辑对齐。
+ * - `stepId`：可选稳定 id，便于插件更新同一阶段。
+ */
+export type PluginToolLikeStepPayload = {
+  toolName: string;
+  state: PluginToolLikeStepState;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  /** 兼容旧字段：等同 output */
+  result?: unknown;
+  errorText?: string;
+  stepId?: string;
+};
+
+/** 插件上报工具风格步骤的窄接口。 */
+export type PluginToolLikeStepEmitter = (step: PluginToolLikeStepPayload) => void;
+
+/**
  * `executeTurn` 入参：单轮编排中插件可见的最小上下文。
  * - `message`：本轮用户可见正文。
  * - `argv`：可选；宿主若已解析为「命令名 + 参数数组」，可一并传入；未传时插件仅依据 `message` 解析即可。
@@ -63,7 +96,8 @@ export type PluginTurnContext = {
     command: string;
     args: string[];
   };
-  emitAssistantDelta?: (delta: string) => void;
+  emitAssistantDelta?: PluginAssistantDeltaEmitter;
+  emitToolLikeStep?: PluginToolLikeStepEmitter;
 };
 
 export type PluginScheduledTask = {
