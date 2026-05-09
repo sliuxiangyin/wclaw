@@ -66,7 +66,13 @@ export async function executeRuntimeDefault(
     });
   }
 
-  const { tools: llmTools, stats: toolStats } = buildRuntimeDefaultLlmTools(manifest, mcpToolForbidden, sessionId, traceId);
+  const { tools: llmTools, stats: toolStats } = buildRuntimeDefaultLlmTools(
+    manifest,
+    mcpToolForbidden,
+    pluginId,
+    sessionId,
+    traceId
+  );
 
   let messagesForLlm: LlmLine[] = llmMessages;
   if (Object.keys(llmTools).length > 0) {
@@ -144,6 +150,7 @@ export async function executeRuntimeDefault(
 export function buildRuntimeDefaultLlmTools(
   manifest: PluginManifest,
   mcpToolForbidden: McpToolForbidden,
+  pluginId: string,
   sessionId: string,
   traceId?: string | null
 ): {
@@ -215,7 +222,7 @@ export function buildRuntimeDefaultLlmTools(
           toolId: `${t.serverId}/${t.name}`,
           arguments: normalizeToolArgs(args),
           traceId,
-          contextKey: sessionId
+          contextKey: `${pluginId}:${sessionId}`
         })
     };
   }

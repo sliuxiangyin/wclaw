@@ -33,7 +33,11 @@ export async function orchestrateHostMcpCommandMatched(
     return pluginNotFoundReply(cmd.targetPluginId);
   }
   const mode = resolveCommandPluginMode(target.manifest);
-  const commandResult = await executeMcpExplicitCommand(cmd.commandText, target.manifest);
+  const commandResult = await executeMcpExplicitCommand(
+    cmd.commandText,
+    target.manifest,
+    `${cmd.targetPluginId}:${ctx.sessionId}`
+  );
   if (!commandResult) {
     return {
       reply: "[mcp] 命令解析失败。",

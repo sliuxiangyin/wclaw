@@ -32,6 +32,61 @@ function logLlmRequestMessages(kind: "generate" | "stream", input: {
   });
 }
 
+function logLlmResolvedMessages(kind: "generate" | "stream" | "stream-ui", input: {
+  modelOverride?: string;
+  toolPolicy?: "auto" | "none";
+  tools?: ToolSet;
+  messages: ModelMessage[];
+}): void {
+  const messageContents = input.messages.map((m, index) => ({
+    index,
+    role: m.role,
+    contentText:JSON.stringify(m),
+    contentRaw: safeJsonStringify((m as { content?: unknown }).content)
+  }));
+  console.info("[llm-send]", {
+    kind,
+    modelOverride: input.modelOverride ?? null,
+    toolPolicy: input.toolPolicy ?? "auto",
+    hasTools: Boolean(input.tools && Object.keys(input.tools).length > 0),
+    messageCount: input.messages.length,
+    messages: input.messages,
+    messageContents
+  });
+}
+
+function extractModelMessageContentText(message: ModelMessage): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return String(content ?? "");
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (!part || typeof part !== "object") return String(part);
+      const rec = part as Record<string, unknown>;
+      if (typeof rec.text === "string") return rec.text;
+      if (typeof rec.content === "string") return rec.content;
+      if (rec.type === "tool-call" || rec.type === "tool-result") {
+        return safeJsonStringify(rec);
+      }
+      return safeJsonStringify(rec);
+    })
+    .join("\n");
+}
+
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function truncateText(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen)}...(truncated)`;
+}
+
 export async function generateWithConfiguredLlm(input: {
   messages: LlmInputMessage[];
   modelOverride?: string;
@@ -43,6 +98,12 @@ export async function generateWithConfiguredLlm(input: {
   const runtime = buildLlmRuntime(input.modelOverride);
   const messages = runtime.toModelMessages(input.messages);
   const hasTools = input.toolPolicy !== "none" && Boolean(input.tools && Object.keys(input.tools).length > 0);
+  logLlmResolvedMessages("generate", {
+    modelOverride: input.modelOverride,
+    toolPolicy: input.toolPolicy,
+    tools: input.tools,
+    messages
+  });
   try {
     const result = await generateText({
       model: runtime.model,
@@ -76,6 +137,12 @@ export async function streamWithConfiguredLlm(input: {
   const runtime = buildLlmRuntime(input.modelOverride);
   const messages = runtime.toModelMessages(input.messages);
   const hasTools = input.toolPolicy !== "none" && Boolean(input.tools && Object.keys(input.tools).length > 0);
+  logLlmResolvedMessages("stream", {
+    modelOverride: input.modelOverride,
+    toolPolicy: input.toolPolicy,
+    tools: input.tools,
+    messages
+  });
   try {
     const result = streamText({
       model: runtime.model,
@@ -120,10 +187,17 @@ export async function streamUiMessagesWithConfiguredLlm(input: {
       .map((s) => (typeof s === "string" ? s.trim() : ""))
       .filter(Boolean)
       .join("\n\n");
+    const messages = await convertToModelMessages(input.messages);
+    logLlmResolvedMessages("stream-ui", {
+      modelOverride: input.modelOverride,
+      toolPolicy: input.toolPolicy,
+      tools: input.tools,
+      messages
+    });
     return streamText({
       model: runtime.model,
       ...(system ? { system } : {}),
-      messages: await convertToModelMessages(input.messages),
+      messages,
       allowSystemInMessages: true,
       abortSignal: input.abortSignal,
       stopWhen: stepCountIs(runtime.maxSteps),

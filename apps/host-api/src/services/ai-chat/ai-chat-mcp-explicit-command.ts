@@ -47,7 +47,8 @@ export function parseMcpExplicitCommand(commandText: string): ParsedMcpExplicitC
 
 export async function executeMcpExplicitCommand(
   commandText: string,
-  manifest: PluginManifest
+  manifest: PluginManifest,
+  contextKey?: string
 ): Promise<McpCommandResult | null> {
   const parsed = parseMcpExplicitCommand(commandText);
   if (!parsed) {
@@ -98,7 +99,8 @@ export async function executeMcpExplicitCommand(
 
   const result = await gateway.invokeTool({
     toolId: `${parsed.serverAlias}/${parsed.toolName}`,
-    arguments: parsed.args
+    arguments: parsed.args,
+    contextKey
   });
   return {
     pluginId: manifest.id,

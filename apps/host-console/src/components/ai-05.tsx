@@ -432,10 +432,16 @@ function resolveFinalToolStatus(part: Record<string, unknown>): ToolCallMessageP
       error: errorText.length > 0 ? errorText : "tool returned isError=true"
     };
   }
-  const partType = typeof part.type === "string" ? part.type : "";
-  if (partType === "tool-input-start" || partType === "tool-input-available" || partType === "tool-input-delta") {
-    return { type: "running" };
+  const statusValue = part.status;
+  if (typeof statusValue === "string") {
+    if (statusValue === "running") return { type: "running" };
+    if (statusValue === "complete") return { type: "complete" };
+    if (statusValue === "requires-action") return { type: "requires-action", reason: "interrupt" };
+    if (statusValue === "incomplete") {
+      return { type: "incomplete", reason: "other", error: errorText || undefined };
+    }
   }
+ 
   return { type: "complete" };
 }
 
