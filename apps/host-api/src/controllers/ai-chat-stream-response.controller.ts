@@ -92,13 +92,6 @@ function toToolLikePart(step: PluginToolLikeStepPayload): ToolLikePart {
   };
 }
 
-function weaveFinalizedToolsIntoParts(
-  textPart: { type: "text"; text: string },
-  toolParts: PersistedToolFinalPart[]
-): UIMessage["parts"] {
-  return [textPart, ...toolParts] as UIMessage["parts"];
-}
-
 export function textFromUiMessage(message: UIMessage): string {
   return (message.parts ?? [])
     .map((part) => {
@@ -188,6 +181,12 @@ export function createOrchestratedTextStreamResponse(input: {
         const textId = "text-1";
         let textStarted = false;
         let visibleText = "";
+        let pendingPersistText = "";
+        const persistedTimeline: Array<
+          | { type: "text"; text: string }
+          | { type: "tool-ref"; toolCallId: string }
+        > = [];
+        const timelineToolInserted = new Set<string>();
         const toolLikePartsByCallId = new Map<
           string,
           {
@@ -205,6 +204,11 @@ export function createOrchestratedTextStreamResponse(input: {
           writer.write({ type: "text-start", id: textId });
           textStarted = true;
         };
+        const flushPendingPersistText = () => {
+          if (pendingPersistText.length === 0) return;
+          persistedTimeline.push({ type: "text", text: pendingPersistText });
+          pendingPersistText = "";
+        };
         const result = await input.run({
           onStart: () => {
             ensureTextStart();
@@ -213,10 +217,16 @@ export function createOrchestratedTextStreamResponse(input: {
             if (delta.length === 0) return;
             ensureTextStart();
             visibleText += delta;
+            pendingPersistText += delta;
             writer.write({ type: "text-delta", id: textId, delta });
           },
           onToolLikeStep: (step) => {
             const part = toToolLikePart(step);
+            flushPendingPersistText();
+            if (!timelineToolInserted.has(part.toolCallId)) {
+              persistedTimeline.push({ type: "tool-ref", toolCallId: part.toolCallId });
+              timelineToolInserted.add(part.toolCallId);
+            }
             let aggregate = toolLikePartsByCallId.get(part.toolCallId);
             if (!aggregate) {
               aggregate = {
@@ -273,19 +283,37 @@ export function createOrchestratedTextStreamResponse(input: {
         ensureTextStart();
         if (!result.skipFinalReplyChunks && result.text.length > 0) {
           visibleText += result.text;
+          pendingPersistText += result.text;
           writer.write({ type: "text-delta", id: textId, delta: result.text });
         }
         writer.write({ type: "text-end", id: textId });
-        const persistedToolParts: PersistedToolFinalPart[] = [...toolLikePartsByCallId.values()]
-          .sort((a, b) => a.firstSeenIndex - b.firstSeenIndex)
-          .map((agg) => ({
-            type: "dynamic-tool",
-            state: "output-available",
-            toolCallId: agg.toolCallId,
-            toolName: agg.toolName,
-            input: agg.input,
-            output: agg.output
-          }));
+        flushPendingPersistText();
+        const persistedToolPartsByCallId = new Map<string, PersistedToolFinalPart>(
+          [...toolLikePartsByCallId.values()]
+            .sort((a, b) => a.firstSeenIndex - b.firstSeenIndex)
+            .map((agg) => [
+              agg.toolCallId,
+              {
+                type: "dynamic-tool",
+                state: "output-available",
+                toolCallId: agg.toolCallId,
+                toolName: agg.toolName,
+                input: agg.input,
+                output: agg.output
+              } satisfies PersistedToolFinalPart
+            ])
+        );
+        const persistedParts: UIMessage["parts"] = [];
+        for (const item of persistedTimeline) {
+          if (item.type === "text") {
+            persistedParts.push({ type: "text", text: item.text } as UIMessage["parts"][number]);
+            continue;
+          }
+          const tool = persistedToolPartsByCallId.get(item.toolCallId);
+          if (tool) {
+            persistedParts.push(tool as UIMessage["parts"][number]);
+          }
+        }
         const assistantMessage: UIMessage = {
           id: `assistant:${randomUUID()}`,
           role: "assistant",
@@ -293,7 +321,7 @@ export function createOrchestratedTextStreamResponse(input: {
             source:
               result.sourceType === "plugin" && result.sourcePluginId ? `plugin:${result.sourcePluginId}` : "runtime"
           },
-          parts: weaveFinalizedToolsIntoParts({ type: "text", text: visibleText }, persistedToolParts)
+          parts: persistedParts
         };
         upsertUiMessage({
           pluginId: input.pluginId,
