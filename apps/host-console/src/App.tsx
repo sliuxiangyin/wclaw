@@ -1,12 +1,28 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { PluginChatPage } from "./pages/plugins/plugin-chat-page";
 import { PluginsPage } from "./pages/plugins/plugins-page";
 import { LlmSettingsPage } from "./pages/settings/llm-settings-page";
+import { LlmProfileEditorPage } from "./pages/settings/llm-profile-editor-page";
 import { McpServerEditorPage } from "./pages/mcp/mcp-server-editor-page";
 import { McpPage } from "./pages/mcp/mcp-page";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { useNotificationStream } from "./features/notifications/hooks/use-notification-stream";
+
+function LlmSettingsNavLink() {
+  const location = useLocation();
+  const active = location.pathname.startsWith("/settings/llm");
+  return (
+    <Button asChild variant="ghost">
+      <NavLink
+        to="/settings/llm"
+        className={() => (active ? "bg-primary text-primary-foreground" : "")}
+      >
+        LLM 设置
+      </NavLink>
+    </Button>
+  );
+}
 
 export function App() {
   const { connected, lastEvent } = useNotificationStream();
@@ -22,14 +38,7 @@ export function App() {
             插件
           </NavLink>
         </Button>
-        <Button asChild variant="ghost">
-          <NavLink
-            to="/settings/llm"
-            className={({ isActive }) => (isActive ? "bg-primary text-primary-foreground" : "")}
-          >
-            LLM 设置
-          </NavLink>
-        </Button>
+        <LlmSettingsNavLink />
         <Button asChild variant="ghost">
           <NavLink
             to="/mcp"
@@ -49,6 +58,7 @@ export function App() {
         <Route path="/" element={<Navigate to="/plugins" replace />} />
         <Route path="/plugins" element={<PluginsPage />} />
         <Route path="/settings/llm" element={<LlmSettingsPage />} />
+        <Route path="/settings/llm/:scope" element={<LlmProfileEditorPage />} />
         <Route path="/mcp" element={<McpPage />} />
         <Route path="/mcp/new" element={<McpServerEditorPage />} />
         <Route path="/mcp/:id" element={<McpServerEditorPage />} />

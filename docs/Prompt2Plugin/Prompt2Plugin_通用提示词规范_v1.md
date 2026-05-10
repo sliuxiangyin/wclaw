@@ -340,6 +340,8 @@ final_status JSON schema：
 
 ## 11. 与 Prompt2Plugin v1 的集成建议
 
+**生成侧约束**：`prompt2plugin-studio` v1 产出的目标插件 **`kind` 固定为 `command_plugin`**；提示词、模板与收敛规则不得按 `runtime_extension` 假设生成清单或能力集。
+
 对接 `prompt2plugin-studio` 命令：
 
 1. `/p2p.spec`：调用 Prompt A（任务分析）

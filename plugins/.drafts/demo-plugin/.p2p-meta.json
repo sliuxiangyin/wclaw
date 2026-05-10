@@ -1,0 +1,57 @@
+{
+  "pluginId": "demo-plugin",
+  "kind": "command_plugin",
+  "commandMode": "ephemeral_no_context",
+  "status": "tested",
+  "revision": 13,
+  "spec": {
+    "rawPrompt": "打开百度获取最新新闻 前三个新闻给我",
+    "capabilities": {},
+    "notes": []
+  },
+  "lastValidation": {
+    "profile": "full",
+    "at": "2026-05-10T05:52:46.431Z",
+    "ok": true,
+    "checklist": [
+      {
+        "id": "manifest.validatePluginSpec",
+        "pass": true
+      },
+      {
+        "id": "source.src_runtime_exists",
+        "pass": true
+      },
+      {
+        "id": "source.default_export_class",
+        "pass": true
+      },
+      {
+        "id": "build.pnpm_run_build",
+        "pass": true
+      },
+      {
+        "id": "build.entry_file_exists",
+        "pass": true
+      },
+      {
+        "id": "build.dynamic_import_default",
+        "pass": true
+      }
+    ],
+    "fatal": [],
+    "buildStdout": "\n> @wclaw/plugin-demo-plugin@0.1.0 build /home/code/wclaw/plugins/.drafts/demo-plugin\n> node ./node_modules/@wclaw/plugin-sdk/scripts/build-runtime.mjs\n\n",
+    "buildStderr": ""
+  },
+  "lastTest": {
+    "suite": "full",
+    "at": "2026-05-10T05:54:08.585Z",
+    "ok": true
+  },
+  "updatedAt": "2026-05-10T06:02:57.808Z",
+  "lastPromote": {
+    "at": "2026-05-10T06:02:57.808Z",
+    "traceId": "p2p-mozd9fv0-ctlo0l",
+    "snapshotRevision": 12
+  }
+}

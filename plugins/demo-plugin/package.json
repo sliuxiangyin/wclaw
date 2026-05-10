@@ -1,0 +1,17 @@
+{
+  "name": "@wclaw/plugin-demo-plugin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node ./node_modules/@wclaw/plugin-sdk/scripts/build-runtime.mjs",
+    "dev": "node ./node_modules/@wclaw/plugin-sdk/scripts/build-runtime.mjs --watch"
+  },
+  "dependencies": {
+    "@wclaw/plugin-sdk": "file:../../packages/plugin-sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}

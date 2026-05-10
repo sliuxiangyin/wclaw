@@ -1,0 +1,123 @@
+/**
+ * 与 `apps/host-api/src/core/validate-plugin-spec.ts` 语义对齐；宿主侧变更时请同步此处。
+ */
+import { MCP_ALLOWED_SERVERS_WILDCARD } from "@wclaw/plugin-sdk";
+
+type ValidationResult = {
+  valid: boolean;
+  errors: string[];
+};
+
+export function validatePluginSpec(spec: unknown): ValidationResult {
+  const schemaErrors = validateSchemaShape(spec);
+  if (schemaErrors.length > 0) {
+    return { valid: false, errors: schemaErrors };
+  }
+
+  const semanticErrors = validateSemantics(spec as Record<string, unknown>);
+  return {
+    valid: semanticErrors.length === 0,
+    errors: semanticErrors
+  };
+}
+
+function validateSchemaShape(spec: unknown): string[] {
+  const errors: string[] = [];
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+    return ["spec 必须是 object"];
+  }
+
+  const obj = spec as Record<string, unknown>;
+  const requiredTop = [
+    "id",
+    "displayName",
+    "version",
+    "apiVersion",
+    "kind",
+    "entry",
+    "description"
+  ];
+
+  for (const key of requiredTop) {
+    if (obj[key] === undefined) {
+      errors.push(`缺少必填字段: ${key}`);
+    }
+  }
+
+  if (obj.apiVersion !== "v3") errors.push("apiVersion 必须为 v3");
+  if (!["runtime_plugin", "command_plugin"].includes(String(obj.kind ?? ""))) {
+    errors.push("kind 必须是 runtime_plugin 或 command_plugin");
+  }
+  if (obj.examples !== undefined && (!Array.isArray(obj.examples) || obj.examples.length === 0)) {
+    errors.push("examples 必须是非空数组");
+  }
+  if (obj.permissions !== undefined && !Array.isArray(obj.permissions)) {
+    errors.push("permissions 必须是数组");
+  }
+  if (obj.systemPrompt !== undefined && typeof obj.systemPrompt !== "string") {
+    errors.push("systemPrompt 必须是 string");
+  }
+  if (obj.guide !== undefined) {
+    errors.push("guide 字段已废弃并从清单移除，欢迎语与建议请通过 decorateSessions / 会话行 ui 提供");
+  }
+  if (obj.kind === "command_plugin" && obj.commandMode === undefined) {
+    errors.push("kind=command_plugin 时，commandMode 必填");
+  }
+
+  return errors;
+}
+
+function validateSemantics(spec: Record<string, unknown>): string[] {
+  const errors: string[] = [];
+  const mcp = spec.mcp as Record<string, unknown> | undefined;
+  const kind = String(spec.kind ?? "");
+  const commandMode = spec.commandMode;
+  const entry = String(spec.entry ?? "");
+
+  if (entry.includes("..")) {
+    errors.push("entry 不能包含 '..' 路径跳转");
+  }
+
+  if (kind === "command_plugin") {
+    if (
+      commandMode !== "ephemeral_no_context" &&
+      commandMode !== "ephemeral_with_context" &&
+      commandMode !== "isolated_chat"
+    ) {
+      errors.push("kind=command_plugin 时，commandMode 必须是有效枚举值");
+    }
+  } else if (commandMode !== undefined) {
+    errors.push("kind=runtime_plugin 时，禁止配置 commandMode");
+  }
+
+  const allowedServers = (mcp?.allowedServers as string[] | undefined) ?? [];
+  const allowedTools = (mcp?.allowedTools as string[] | undefined) ?? [];
+  if (allowedServers.length > 0 && allowedTools.length > 0) {
+    errors.push("mcp.allowedServers 与 mcp.allowedTools 不能同时配置（allowedTools 为兼容字段）");
+  }
+
+  const aliasPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
+  for (const alias of allowedServers) {
+    if (typeof alias !== "string") {
+      errors.push(`mcp.allowedServers 非法别名: ${String(alias)}`);
+      continue;
+    }
+    const trimmed = alias.trim();
+    if (trimmed === MCP_ALLOWED_SERVERS_WILDCARD) continue;
+    if (!aliasPattern.test(trimmed)) {
+      errors.push(`mcp.allowedServers 非法别名: ${String(alias)}`);
+    }
+  }
+
+  if ((mcp?.allowedServers || mcp?.allowedTools) && mcp?.deniedTools) {
+    const allow = new Set([...(allowedServers ?? []), ...(allowedTools ?? [])]);
+    const deny = new Set((mcp.deniedTools as string[]) ?? []);
+    for (const key of allow) {
+      if (deny.has(key)) {
+        errors.push(`mcp.allowedServers/allowedTools 与 deniedTools 冲突: ${key}`);
+      }
+    }
+  }
+
+  return errors;
+}

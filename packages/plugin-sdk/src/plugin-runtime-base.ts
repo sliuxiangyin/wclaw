@@ -14,6 +14,7 @@ import type {
 } from "./runtime-contract.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { TurnContextEmitter } from "./turn-context-emitter.js";
 
 export type RuntimeBridgeName = "mcp" | "llm" | "ingest";
 
@@ -149,54 +150,7 @@ export abstract class BasePluginRuntime {
     this.deps.publish(input);
   }
 
-  protected emitAssistantDelta(ctx: PluginTurnContext, delta: string): void {
-    // 仅转发助手正文文本；宿主侧负责映射到 Chat 主路的 text delta。
-    ctx.emitAssistantDelta?.(delta);
-  }
 
-  protected emitToolLikeStep(ctx: PluginTurnContext, step: PluginToolLikeStepPayload): void {
-    // 仅透传工具风格步骤；宿主侧负责映射成可渲染的 UIMessage part。
-    const toolName = typeof step.toolName === "string" && step.toolName.trim().length > 0 ? step.toolName.trim() : "unknown_tool";
-    const normalizedStep: PluginToolLikeStepPayload = {
-      ...step,
-      toolName,
-      stepId:
-        typeof step.stepId === "string" && step.stepId.trim().length > 0
-          ? step.stepId.trim()
-          : this.buildToolStepId(toolName),
-      ...(step.output ? { result: step.output } : {})
-    };
-    ctx.emitToolLikeStep?.(normalizedStep);
-  }
-
-  protected emitToolRunning(
-    ctx: PluginTurnContext,
-    toolName: string,
-    input: Record<string, unknown> = {},
-    output: Record<string, unknown> = {}
-  ): void {
-    this.emitToolLikeStep(ctx, { toolName, state: "running", input, output });
-  }
-
-  protected emitToolAvailable(
-    ctx: PluginTurnContext,
-    toolName: string,
-    input: Record<string, unknown> = {},
-    output: Record<string, unknown> = {}
-  ): void {
-    this.emitToolLikeStep(ctx, { toolName, state: "output-available", input, output });
-  }
-
-  protected emitToolError(
-    ctx: PluginTurnContext,
-    toolName: string,
-    errorText: string,
-    input: Record<string, unknown> = {},
-    output: Record<string, unknown> = {}
-  ): void {
-    output['isError'] = true;
-    this.emitToolLikeStep(ctx, { toolName, state: "output-error", errorText, input, output });
-  }
 
   protected buildToolOutContent(text: string): { type: "text"; text: string } {
     return { type: "text", text };
@@ -210,11 +164,6 @@ export abstract class BasePluginRuntime {
       ...extra,
       content: [this.buildToolOutContent(text)]
     };
-  }
-
-  private buildToolStepId(toolName: string): string {
-    const normalized = toolName.replace(/[^a-zA-Z0-9_-]/g, "_");
-    return `${this.pluginId}:${normalized}`;
   }
 
   private async callMcp(input: HostMcpInvokeInput): Promise<Extract<HostMcpInvokeResult, { ok: true }>> {

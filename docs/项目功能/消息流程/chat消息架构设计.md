@@ -696,3 +696,4 @@ flowchart TD
 - `command_plugin` 独立 chat 入口可直接复用同一执行内核。
 - `EventPublisher` 后接 Workflow/Scheduler 即可实现自动触发链。
 - ToolExecutor 可按会话作用域切换 MCP 工具集（normal/isolated）。
+- **人机中断 / 工具审批（SSE 单向，第二次 HTTP 提交结果）**：实现备忘见 `docs/项目功能/宿主/AIChat_人机中断与工具审批_实现备忘.md`（当前仓库未实现专用接口，仅作后续对照）。

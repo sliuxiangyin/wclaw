@@ -8,6 +8,7 @@ import {
   saveSessionMcpToolForbidden,
   type McpToolForbidden
 } from "@/lib/api/plugin-chat.api";
+import { mcpAllowedServersAllowsServerId } from "@/lib/mcp-allowed-servers";
 
 export type McpToolItem = {
   id: string;
@@ -128,9 +129,9 @@ export function Ai05ToolPanel(props: Ai05ToolPanelProps) {
         }
         const nextServers: McpServerItem[] = mcpAllowedCatalog.servers
           .filter((server) =>
-            Array.isArray(allowedServerIds) && allowedServerIds.length > 0
-              ? allowedServerIds.includes(server.id)
-              : true
+            !Array.isArray(allowedServerIds) || allowedServerIds.length === 0
+              ? true
+              : mcpAllowedServersAllowsServerId(server.id, allowedServerIds)
           )
           .map((server) => ({
             id: server.id,

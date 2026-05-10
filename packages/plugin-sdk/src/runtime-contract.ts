@@ -5,6 +5,21 @@
  * 统一约定：**仅** `executeTurn` / `executeCompleted` 作为一轮输入与编排后回流入口（见 `docs/插件/插件实例与编排.md`）。
  */
 
+/** 会话 UI `chooses`：与用户输入匹配的选项工具参数（宿主/前端按需消费）。 */
+export type PluginSessionUiChooseArgs = {
+  question: string;
+  options: readonly string[];
+};
+
+/** 会话 UI `chooses`：单条规则（pattern 与用户输入比对，命中则映射为工具调用描述）。 */
+export type PluginSessionUiChooseRule = {
+  /** ECMAScript 正则源码，须可被 `new RegExp(pattern, patternFlags)` 使用（便于 JSON 传输）。 */
+  pattern: string;
+  patternFlags?: string;
+  toolName: string;
+  args: PluginSessionUiChooseArgs;
+};
+
 export type PluginSessionRow = {
   sessionId: string;
   updatedAt: string;
@@ -15,6 +30,7 @@ export type PluginSessionRow = {
     badges?: string[];
     welcome?: string;
     suggestions?: Array<{ prompt: string; text?: string }>;
+    chooses?: PluginSessionUiChooseRule[];
     avatarUrl?: string;
     coverUrl?: string;
   };

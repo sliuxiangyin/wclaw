@@ -42,6 +42,16 @@ type SessionsResponse = {
   error: ApiError;
 };
 
+export type PluginSessionUiChooseRuleDto = {
+  pattern: string;
+  patternFlags?: string;
+  toolName: string;
+  args: {
+    question: string;
+    options: string[];
+  };
+};
+
 export type PluginSessionRowDto = {
   sessionId: string;
   updatedAt: string;
@@ -54,6 +64,7 @@ export type PluginSessionRowDto = {
     badges?: string[];
     welcome?: string;
     suggestions?: Array<{ prompt: string; text?: string }>;
+    chooses?: PluginSessionUiChooseRuleDto[];
     avatarUrl?: string;
     coverUrl?: string;
   };

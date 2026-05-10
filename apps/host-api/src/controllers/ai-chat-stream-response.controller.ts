@@ -47,6 +47,15 @@ type ToolLikePart =
       errorText: string;
     };
 
+type PersistedToolFinalPart = {
+  type: "dynamic-tool";
+  state: "output-available";
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  output: unknown;
+};
+
 function toToolLikePart(step: PluginToolLikeStepPayload): ToolLikePart {
   const rawName = step.toolName;
   const toolCallId = step.stepId ?? `plugin-step:${randomUUID()}`;
@@ -81,6 +90,13 @@ function toToolLikePart(step: PluginToolLikeStepPayload): ToolLikePart {
     input,
     output
   };
+}
+
+function weaveFinalizedToolsIntoParts(
+  textPart: { type: "text"; text: string },
+  toolParts: PersistedToolFinalPart[]
+): UIMessage["parts"] {
+  return [textPart, ...toolParts] as UIMessage["parts"];
 }
 
 export function textFromUiMessage(message: UIMessage): string {
@@ -172,7 +188,17 @@ export function createOrchestratedTextStreamResponse(input: {
         const textId = "text-1";
         let textStarted = false;
         let visibleText = "";
-        const toolLikeParts: ToolLikePart[] = [];
+        const toolLikePartsByCallId = new Map<
+          string,
+          {
+            toolCallId: string;
+            toolName: string;
+            input: unknown;
+            output: unknown;
+            firstSeenIndex: number;
+          }
+        >();
+        let toolSeenCounter = 0;
         const startedToolCalls = new Set<string>();
         const ensureTextStart = () => {
           if (textStarted) return;
@@ -191,7 +217,30 @@ export function createOrchestratedTextStreamResponse(input: {
           },
           onToolLikeStep: (step) => {
             const part = toToolLikePart(step);
-            toolLikeParts.push(part);
+            let aggregate = toolLikePartsByCallId.get(part.toolCallId);
+            if (!aggregate) {
+              aggregate = {
+                toolCallId: part.toolCallId,
+                toolName: part.toolName,
+                input: part.input ?? {},
+                output: {},
+                firstSeenIndex: toolSeenCounter++
+              };
+              toolLikePartsByCallId.set(part.toolCallId, aggregate);
+            }
+            aggregate.toolName = part.toolName;
+            if (part.input !== undefined) {
+              aggregate.input = part.input;
+            }
+            if (part.state === "output-available") {
+              aggregate.output = part.output;
+            } else if (part.state === "output-error") {
+              aggregate.output = {
+                isError: true,
+                errorText: part.errorText,
+                content: [{ type: "text", text: part.errorText }]
+              };
+            }
             if (!startedToolCalls.has(part.toolCallId)) {
               writer.write({
                 type: "tool-input-start",
@@ -216,7 +265,7 @@ export function createOrchestratedTextStreamResponse(input: {
               writer.write({
                 type: "tool-output-error",
                 toolCallId: part.toolCallId,
-                errorText: part.errorText
+                errorText: part.errorText,
               });
             }
           }
@@ -227,6 +276,16 @@ export function createOrchestratedTextStreamResponse(input: {
           writer.write({ type: "text-delta", id: textId, delta: result.text });
         }
         writer.write({ type: "text-end", id: textId });
+        const persistedToolParts: PersistedToolFinalPart[] = [...toolLikePartsByCallId.values()]
+          .sort((a, b) => a.firstSeenIndex - b.firstSeenIndex)
+          .map((agg) => ({
+            type: "dynamic-tool",
+            state: "output-available",
+            toolCallId: agg.toolCallId,
+            toolName: agg.toolName,
+            input: agg.input,
+            output: agg.output
+          }));
         const assistantMessage: UIMessage = {
           id: `assistant:${randomUUID()}`,
           role: "assistant",
@@ -234,10 +293,7 @@ export function createOrchestratedTextStreamResponse(input: {
             source:
               result.sourceType === "plugin" && result.sourcePluginId ? `plugin:${result.sourcePluginId}` : "runtime"
           },
-          parts: [
-            { type: "text", text: visibleText },
-            ...(toolLikeParts as unknown as UIMessage["parts"])
-          ]
+          parts: weaveFinalizedToolsIntoParts({ type: "text", text: visibleText }, persistedToolParts)
         };
         upsertUiMessage({
           pluginId: input.pluginId,

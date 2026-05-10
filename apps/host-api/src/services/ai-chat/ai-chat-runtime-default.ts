@@ -1,3 +1,4 @@
+import { mcpAllowedServersAllowsServerId } from "@wclaw/plugin-sdk";
 import type { PluginRuntimePort } from "../../core/plugin-runtime.port.js";
 import { appendChatEvent } from "../../repositories/chat-event.repository.js";
 import type { McpToolForbidden } from "../../repositories/chat-session.repository.js";
@@ -172,7 +173,6 @@ export function buildRuntimeDefaultLlmTools(
 
   const gateway = createMcpGatewayService();
   const catalog = gateway.buildCatalog();
-  const allowedServerSet = new Set(allowedServers);
   const forbiddenServerSet = new Set(mcpToolForbidden.servers);
   const forbiddenToolsByServer: Record<string, Set<string>> = {};
   for (const [serverId, toolNames] of Object.entries(mcpToolForbidden.tools)) {
@@ -188,7 +188,7 @@ export function buildRuntimeDefaultLlmTools(
   > = {};
 
   for (const t of catalog.tools) {
-    if (!allowedServerSet.has(t.serverId)) continue;
+    if (!mcpAllowedServersAllowsServerId(t.serverId, allowedServers)) continue;
     candidateCount += 1;
     if (forbiddenServerSet.has(t.serverId)) {
       deniedByServerCount += 1;

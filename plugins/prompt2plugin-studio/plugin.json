@@ -1,0 +1,39 @@
+{
+  "id": "prompt2plugin-studio",
+  "displayName": "Prompt2Plugin Studio",
+  "version": "0.1.0",
+  "apiVersion": "v3",
+  "kind": "runtime_plugin",
+  "entry": "dist/runtime.mjs",
+  "description": "Prompt2Plugin 开发助手：管理草稿元数据并执行 /p2p.init 与 /p2p.status。",
+  "triggerDescription": "输入 /p2p.init 或 /p2p.status",
+  "examples": [
+    {
+      "input": "/p2p.init demo-plugin --kind command_plugin"
+    },
+    {
+      "input": "/p2p.status demo-plugin"
+    }
+  ],
+  "mcp": {
+    "allowedServers": ["playwright"]
+  },
+  "sessionProvider": {
+    "mode": "multi"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "defaultKind": {
+        "type": "string",
+        "enum": [
+          "command_plugin"
+        ],
+        "default": "command_plugin"
+      }
+    }
+  },
+  "defaultConfig": {
+    "defaultKind": "command_plugin"
+  }
+}

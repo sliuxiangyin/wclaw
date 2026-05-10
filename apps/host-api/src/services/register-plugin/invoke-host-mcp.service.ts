@@ -1,8 +1,9 @@
-import type {
-  HostMcpInvokeInput,
-  HostMcpInvokeResult,
-  HostMcpReleaseContextInput,
-  HostMcpReleaseContextResult
+import {
+  mcpAllowedServersAllowsServerId,
+  type HostMcpInvokeInput,
+  type HostMcpInvokeResult,
+  type HostMcpReleaseContextInput,
+  type HostMcpReleaseContextResult
 } from "@wclaw/plugin-sdk";
 import { AppError } from "../../core/app-error.js";
 import { ERROR_CODES } from "../../core/error-codes.js";
@@ -42,7 +43,7 @@ export function createInvokeHostMcpToolForPlugin(
     }
     try {
       const { serverId } = options.mcpGateway.splitQualifiedToolId(input.toolId);
-      if (!allowedServers.includes(serverId)) {
+      if (!mcpAllowedServersAllowsServerId(serverId, allowedServers)) {
         return {
           ok: false,
           code: ERROR_CODES.INVALID_REQUEST,
@@ -81,7 +82,7 @@ export function createReleaseHostMcpContextForPlugin(
       };
     }
     const allowedServers = manifest.mcp?.allowedServers ?? [];
-    if (!allowedServers.includes(input.serverId)) {
+    if (!mcpAllowedServersAllowsServerId(input.serverId, allowedServers)) {
       return {
         ok: false,
         code: ERROR_CODES.INVALID_REQUEST,

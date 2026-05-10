@@ -1,3 +1,4 @@
+import { mcpAllowedServersHasWildcard } from "@wclaw/plugin-sdk";
 import { AppError } from "../core/app-error.js";
 import { ERROR_CODES } from "../core/error-codes.js";
 import type { PluginManifest } from "../core/plugin-object.types.js";
@@ -54,8 +55,9 @@ export function buildPluginMcpAllowedCatalog(
   if (allowedServers.size === 0) return { servers: [], tools: [] };
   const catalog = mcpGateway.buildCatalog();
   const runningServers = catalog.servers.filter((s) => s.enabled);
+  const wildcard = mcpAllowedServersHasWildcard(manifest.mcp?.allowedServers);
   const servers = runningServers
-    .filter((s) => allowedServers.has(s.id))
+    .filter((s) => wildcard || allowedServers.has(s.id))
     .map((s) => ({ id: s.id, displayName: s.displayName }));
   const runningServerIds = new Set(servers.map((s) => s.id));
   const tools = catalog.tools

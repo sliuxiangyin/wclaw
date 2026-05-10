@@ -50,7 +50,7 @@ export function useNotificationStream() {
       try {
         const data = JSON.parse(evt.data) as NotificationStreamEvent;
         setLastEvent(data);
-        console.info("[notification-sse:event]", data.type, data);
+        // console.info("[notification-sse:event]", data.type, data);
         if (data.type === "ui.toast") {
           const p = data.payload;
           const title = typeof p?.title === "string" ? p.title : "提示";

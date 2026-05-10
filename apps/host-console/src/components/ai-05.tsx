@@ -6,7 +6,8 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  type ReactNode
 } from "react";
 import {
   ActionBarPrimitive,
@@ -38,11 +39,13 @@ import type { PluginListItem } from "@/lib/api/plugins.api";
 import {
   cancelAiChatRun,
   clearPluginSessionMessages,
-  type PluginSessionRowDto
+  type PluginSessionRowDto,
+  type PluginSessionUiChooseRuleDto
 } from "@/lib/api/plugin-chat.api";
 import { PluginChatTransport } from "@/features/chat/runtime/plugin-chat-transport";
 import { Ai05ToolPanel } from "./ai-05-tool-panel";
 import { ComposerAddAttachment, ComposerAttachments } from "./assistant-ui/attachment";
+import { AskUserToChooseToolUI,  } from "./assistant-ui/tools";
 import { MarkdownText } from "./assistant-ui/markdown-text";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import {
@@ -52,8 +55,6 @@ import {
   ReasoningText,
   ReasoningTrigger,
 } from "./assistant-ui/reasoning";
-import { json } from "monaco-editor";
-
 interface Ai05Props {
   plugin: PluginListItem;
   sessionId: string;
@@ -109,7 +110,8 @@ export default function Ai05({
   const displayTitle = title ?? manifest?.displayName ?? plugin.pluginId;
   const displaySubtitle = subtitle ?? ` ${plugin.pluginId}`;
   const displayStatus = statusText ?? "Live";
-  const allowedServerIds = manifest?.mcp?.allowedServers ?? [];
+  const allowedFromManifest = manifest?.mcp?.allowedServers;
+  const allowedServerIds = useMemo(() => allowedFromManifest ?? [], [allowedFromManifest]);
 
   const handleCancelRun = useCallback(async () => {
     try {
@@ -148,8 +150,15 @@ export default function Ai05({
   const displaySuggestions = suggestions ?? session?.ui?.suggestions ?? [];
   const showWelcomeBlock = Boolean(displayWelcome) || displaySuggestions.length > 0;
 
+  const sessionChooses = useMemo((): PluginSessionUiChooseRuleDto[] | undefined => {
+    const raw = session?.ui?.chooses;
+    if (!Array.isArray(raw) || raw.length === 0) return undefined;
+    return raw;
+  }, [session?.ui?.chooses]);
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      {sessionChooses ? <AskUserToChooseToolUI /> : null}
       <div className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-lg">
         <header className="flex items-center justify-between gap-4 border-b border-border/80 px-4 py-3">
           <div className="flex items-center gap-3">
@@ -409,7 +418,7 @@ function Ai05ToolLikeFallbackPart({ part }: { part: unknown }) {
     typeof rec.argsText === "string" && rec.argsText.trim().length > 0
       ? rec.argsText
       : summarizeToolInputForDisplay(rec.input);
-  const result = summarizeToolResultForDisplay(rec.result, rec.errorText);
+  const result = summarizeToolResultForDisplay(rec.result ?? rec.output, rec.errorText);
 
   return (
     <ToolFallback.Root className="mt-2">
@@ -432,16 +441,62 @@ function resolveFinalToolStatus(part: Record<string, unknown>): ToolCallMessageP
       error: errorText.length > 0 ? errorText : "tool returned isError=true"
     };
   }
-  const statusValue = part.status;
-  if (typeof statusValue === "string") {
-    if (statusValue === "running") return { type: "running" };
-    if (statusValue === "complete") return { type: "complete" };
-    if (statusValue === "requires-action") return { type: "requires-action", reason: "interrupt" };
-    if (statusValue === "incomplete") {
+  const raw = part.status;
+  const legacyState = typeof part.state === "string" ? part.state : undefined;
+  /**
+   * assistant-ui 对 tool-call 的 `status` 多为结构化对象（见 `@assistant-ui/core` 的 `ToolCallMessagePartStatus`），
+   * 例如流式未完成、工具中断待人工处理：`{ type: "requires-action", reason: "interrupt" }`。
+   * 对象上可能出现的 Symbol 属性来自运行时/代理内部标记，调试器里会看到，一般不必读取。
+   */
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const s = raw as Record<string, unknown>;
+    const kind = s.type;
+    if (kind === "running") return { type: "running" };
+    if (kind === "complete") return { type: "complete" };
+    if (kind === "requires-action" && s.reason === "interrupt") {
+      return { type: "requires-action", reason: "interrupt" };
+    }
+    if (kind === "incomplete") {
+      const reason = s.reason;
+      if (
+        reason === "cancelled" ||
+        reason === "length" ||
+        reason === "content-filter" ||
+        reason === "other" ||
+        reason === "error"
+      ) {
+        return {
+          type: "incomplete",
+          reason,
+          ...(s.error !== undefined ? { error: s.error } : {})
+        };
+      }
       return { type: "incomplete", reason: "other", error: errorText || undefined };
     }
   }
- 
+
+  if (typeof raw === "string") {
+    if (raw === "running") return { type: "running" };
+    if (raw === "complete") return { type: "complete" };
+    if (raw === "requires-action") return { type: "requires-action", reason: "interrupt" };
+    if (raw === "incomplete") {
+      return { type: "incomplete", reason: "other", error: errorText || undefined };
+    }
+  }
+  if (legacyState === "input-start" || legacyState === "input-available") {
+    return { type: "running" };
+  }
+  if (legacyState === "output-available") {
+    return { type: "complete" };
+  }
+  if (legacyState === "output-error") {
+    return {
+      type: "incomplete",
+      reason: "error",
+      error: errorText || undefined
+    };
+  }
+
   return { type: "complete" };
 }
 
@@ -485,10 +540,6 @@ function summarizeToolResultForDisplay(output: unknown, errorText?: unknown): st
         return item;
       }
     });
-    // const first = rec.content[0];
-    // if (first && typeof first === "object" && !Array.isArray(first) && typeof (first as { text?: unknown }).text === "string") {
-    //   return truncateForToolDisplay((first as { text: string }).text, 100);
-    // }
   }
   return JSON.stringify(rec);
 }
@@ -551,7 +602,11 @@ function Ai05AssistantMessage() {
             if (kind === "reasoning") {
               return <Reasoning />;
             }
-            if ( kind === "tool-call" ) {
+            if (kind === "tool-call") {
+              const toolLeaf = part as { type: "tool-call"; toolUI?: ReactNode | null };
+              if (toolLeaf.toolUI != null) {
+                return toolLeaf.toolUI;
+              }
               return <Ai05ToolLikeFallbackPart part={part} />;
             }
             if (kind === "data") {

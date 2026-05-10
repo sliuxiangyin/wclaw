@@ -6,9 +6,54 @@
 |------|------|
 | [Prompt2Plugin_开发目标.md](./Prompt2Plugin_开发目标.md) | 进化引擎愿景、护栏、降级与 v1 目标、组件、命令、校验与 DoD |
 | [Prompt2Plugin_v1_实施方案.md](./Prompt2Plugin_v1_实施方案.md) | v1 执行稿：目录、`/p2p.*` 协议、流水线、任务拆分 |
+| [Prompt2Plugin_开发TODO.md](./Prompt2Plugin_开发TODO.md) | **开发执行清单**（与 §11 五日拆分映射；含现状快照与优先级） |
+| [Prompt2Plugin_LLM与提示词链_实现TODO.md](./Prompt2Plugin_LLM与提示词链_实现TODO.md) | **LLM 接入 + 通用提示词 A–E / §9 日志** 实现清单（建议 v1.1） |
 | [Prompt2Plugin_通用提示词规范_v1.md](./Prompt2Plugin_通用提示词规范_v1.md) | 任务分析 / 启动 / 修复 / 收敛等提示词与 JSON 契约 |
 
 项目总览中与 Prompt2Plugin 相关的摘要仍可从 [项目蓝图](../项目蓝图.md) 的「Prompt2Plugin」小节跳转到此处。
+
+---
+
+## 快速开工入口（2 分钟）
+
+推荐阅读顺序（先原则，后细节）：
+
+1. [Prompt2Plugin_开发目标.md](./Prompt2Plugin_开发目标.md)
+  - 看清目标边界、v1 命令范围、DoD 与治理底线。
+2. [Prompt2Plugin_v1_实施方案.md](./Prompt2Plugin_v1_实施方案.md)
+  - 按章节执行：命令契约 -> 生成 -> 校验 -> 测试 -> promote/rollback。
+3. [Prompt2Plugin_通用提示词规范_v1.md](./Prompt2Plugin_通用提示词规范_v1.md)
+  - 用于 `v1.1` 的提示词执行链（analysis/run/repair/converge/script）。
+
+---
+
+## v1 实施顺序（建议）
+
+按以下顺序推进可减少返工：
+
+1. 先定协议：完成 `/p2p.*` 输入/输出契约与错误码。
+2. 再搭骨架：打通 `init/spec/status` 与 `.p2p-meta.json` 读写。
+3. 再做生成：完成 `generate` 的模板产物与 revision 规则。
+4. 再做门禁：接入 `validate/test` 隔离执行链。
+5. 最后发布：实现 `promote/rollback`、并发锁与审计记录。
+
+注意：
+
+- `v1` 只交付：`init/spec/generate/validate/test/promote/rollback/status`。
+- `generate-prompts/run/repair/converge/generate-script` 归 `v1.1`。
+- **`/p2p.init` 统一写法**：`/p2p.init <plugin-id> [--commandMode ephemeral_with_context|ephemeral_no_context|isolated_chat]`；选填 `--commandMode` 写入**目标草稿**清单；生成目标 `plugin.json.kind` 恒为 `command_plugin`（详见实施方案 §4）。
+- **`prompt2plugin-studio` v1 只生成目标插件类型 `command_plugin`**（`plugin.json.kind`），不生成 `runtime_extension`；Studio 自身宿主清单可与目标类型不同（例如 `runtime_plugin` 以便控制台编排）；多会话、`decorateSessions` 等由 Studio 实现。
+
+---
+
+## 开工前检查清单（必看）
+
+1. 命令契约是否已写成可机读结构（不是纯文本约定）。
+2. 权限矩阵是否明确（最小权限 + 越权边界）。
+3. `validate/test` 是否使用隔离目录与沙箱加载。
+4. `promote` 是否具备并发门禁（锁 + `expectedRevision`）。
+5. 审计与保留策略是否落地（命令日志 + promote/rollback 对照）。
+6. 草稿与工作区是否有清理配额（防目录长期膨胀）。
 
 ---
 

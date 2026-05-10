@@ -1,0 +1,2 @@
+{"traceId":"p2p-mozcy3i3-nje17j","pluginId":"demo-plugin","revision":12,"command":"/p2p.test","status":"ok","errorCode":null,"time":"2026-05-10T05:54:08.589Z"}
+{"traceId":"p2p-mozd9fv0-ctlo0l","pluginId":"demo-plugin","revision":13,"command":"/p2p.promote","status":"ok","snapshotRevision":12,"stablePath":"/home/code/wclaw/plugins/demo-plugin","time":"2026-05-10T06:02:57.845Z"}

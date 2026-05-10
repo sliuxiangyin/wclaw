@@ -1,0 +1,17 @@
+{
+  "id": "demo-plugin",
+  "displayName": "Demo Plugin",
+  "version": "0.1.0",
+  "apiVersion": "v3",
+  "kind": "command_plugin",
+  "commandMode": "ephemeral_no_context",
+  "entry": "dist/runtime.mjs",
+  "description": "（草稿）由 Prompt2Plugin Studio 从 spec 生成的占位插件：demo-plugin",
+  "systemPrompt": "打开百度获取最新新闻 前三个新闻给我",
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": true
+  },
+  "defaultConfig": {}
+}

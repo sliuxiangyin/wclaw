@@ -1,0 +1,3 @@
+# 本地 pnpm 缓存目录，减少 IDE 索引噪声
+.pnpm-store/
+

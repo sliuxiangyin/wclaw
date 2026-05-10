@@ -126,8 +126,12 @@ export async function executeCommandPlugin(input: ExecuteCommandPluginInput): Pr
     };
   }
 
+  const rawOutput = commandResult.output;
+  const reply =
+    pluginId === hostPluginId ? rawOutput : `[plugin:${pluginId}] ${rawOutput}`;
+
   return {
-    reply: `[plugin:${pluginId}] ${commandResult.output}`,
+    reply,
     sourceType: "plugin" as const,
     sourcePluginId: pluginId,
     llmEligible: true,

@@ -33,7 +33,7 @@ export function usePluginChat(plugin: PluginListItem) {
     try {
 
       const list = await getPluginSessions(plugin.pluginId);
-
+      
       const remembered = localStorage.getItem(storageKey);
 
       const picked = list.find((x) => x.sessionId === remembered)?.sessionId ?? list[0]?.sessionId ?? "";

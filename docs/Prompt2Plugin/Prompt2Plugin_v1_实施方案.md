@@ -1,6 +1,6 @@
 # Prompt2Plugin v1 实施方案
 
-更新时间：2026-05-07
+更新时间：2026-05-10
 
 本文是 `Prompt2Plugin` 的开发执行稿，目标是把“需求描述 -> 插件草稿 -> 自动校验 -> 联调测试 -> 稳定发布”做成标准化流水线。  
 
@@ -22,6 +22,7 @@
 1. v1 不追求一次生成完整业务插件，只保证“可加载 + 可联调 + 可演进”。
 2. v1 不负责线上全自动灰度，灰度与回滚仍由宿主治理链路执行。
 3. v1 不改造宿主核心插件加载协议（沿用现有 `plugin.json + export default class`）。
+4. **`prompt2plugin-studio` 不生成 `runtime_extension`（文档与历史别名中的 `runtime_plugin`）类目标插件**；若需该类生成能力，须另立版本范围与校验清单。
 
 ---
 
@@ -29,8 +30,8 @@
 
 采用 **“开发插件（builder）+ 草稿隔离目录”** 模式：
 
-1. 新建 `command_plugin`：`prompt2plugin-studio`。
-2. `prompt2plugin-studio` 接收需求并生成草稿插件。
+1. 新建开发插件 **`prompt2plugin-studio`**（builder；自身宿主清单 `kind` 以实现为准，与下方「生成目标」类型解耦）。
+2. `prompt2plugin-studio` 接收需求并生成草稿插件；**生成的目标插件 `plugin.json` 中 `kind` 固定为 `command_plugin`，不允许生成其它 kind。**
 3. 草稿目录通过校验后，再晋升到稳定目录。
 
 该模式相比“直接在目标插件目录开发”有更好治理性：可复用、可审计、可回滚、可自动化。
@@ -73,7 +74,7 @@ plugins/
 
   "pluginId": "demo-plugin",
 
-  "kind": "runtime_plugin",
+  "kind": "command_plugin",
 
   "status": "initialized",
 
@@ -122,7 +123,7 @@ plugins/
 
 由 `prompt2plugin-studio` 在 chat 中提供以下命令：
 
-1. `/p2p.init <plugin-id> --kind runtime_plugin|command_plugin`
+1. `/p2p.init <plugin-id> [--commandMode ephemeral_with_context|ephemeral_no_context|isolated_chat]`（生成目标 `plugin.json.kind` 恒为 `command_plugin`；`--commandMode` 仅作用于目标草稿清单）
 2. `/p2p.spec "<需求描述>"`
 3. `/p2p.generate`
 4. `/p2p.validate`
@@ -138,6 +139,94 @@ plugins/
 - `revision`
 - `status`
 - `nextAction`
+
+---
+
+## 4.1 命令输入/输出契约（开工必备）
+
+为避免实现口径漂移，`/p2p.*` 命令统一采用“请求参数 + 结构化结果”：
+
+```json
+{
+  "ok": true,
+  "traceId": "p2p-xxx",
+  "pluginId": "demo-plugin",
+  "revision": 3,
+  "status": "generated",
+  "nextAction": "/p2p.validate",
+  "data": {},
+  "error": null
+}
+```
+
+失败时：
+
+```json
+{
+  "ok": false,
+  "traceId": "p2p-xxx",
+  "pluginId": "demo-plugin",
+  "revision": 3,
+  "status": "rejected",
+  "nextAction": "/p2p.spec",
+  "data": null,
+  "error": {
+    "code": "P2P_E_SPEC_MISSING",
+    "message": "spec 未就绪，无法 generate"
+  }
+}
+```
+
+各命令最小参数约束：
+
+1. `/p2p.init`
+  - 必填：`pluginId`（`<plugin-id>`）
+  - 选填：`commandMode`，取值 **`ephemeral_with_context` \| `ephemeral_no_context` \| `isolated_chat`**（写入**目标草稿** `plugin.json` 的 `commandMode`；与 `prompt2plugin-studio` 自身宿主清单无关）；省略时按模板默认
+  - **生成目标** `plugin.json.kind` 恒为 `command_plugin`，不在 init 命令行切换；若历史实现仍接受 `--kind`，仅允许 `command_plugin`，否则 `P2P_E_INVALID_ARGS`
+2. `/p2p.spec`
+  - 必填：`pluginId`、`rawPrompt`
+  - 选填：`constraints`、`successCriteria`
+3. `/p2p.generate`
+  - 必填：`pluginId`
+  - 选填：`templateVersion`（默认 `v1`）
+4. `/p2p.validate`
+  - 必填：`pluginId`
+  - 选填：`profile`（`quick|full`，默认 `full`）
+5. `/p2p.test`
+  - 必填：`pluginId`
+  - 选填：`suite`（`smoke|full`，默认 `smoke`）
+6. `/p2p.promote`
+  - 必填：`pluginId`
+  - 选填：`expectedRevision`（用于防并发覆盖）
+7. `/p2p.rollback`
+  - 必填：`pluginId`、`revision`
+8. `/p2p.status`
+  - 必填：`pluginId`
+
+---
+
+## 4.2 错误码与失败分级（统一口径）
+
+建议统一前缀：`P2P_E_*`（错误）与 `P2P_W_*`（告警）。
+
+核心错误码（MVP）：
+
+1. `P2P_E_INVALID_ARGS`：命令参数不合法。
+2. `P2P_E_PLUGIN_ID_CONFLICT`：`pluginId` 与现有稳定/草稿冲突。
+3. `P2P_E_SPEC_MISSING`：`spec` 未就绪。
+4. `P2P_E_GENERATE_FAILED`：生成阶段失败。
+5. `P2P_E_VALIDATE_FAILED`：校验失败（含检查项报告）。
+6. `P2P_E_TEST_FAILED`：测试失败（含失败用例摘要）。
+7. `P2P_E_PROMOTE_GUARD`：不满足晋升门禁（状态不对/关键项未绿）。
+8. `P2P_E_PROMOTE_LOCKED`：目标 `pluginId` 正在晋升（并发锁占用）。
+9. `P2P_E_ROLLBACK_NOT_FOUND`：目标 revision 不存在或不可回滚。
+10. `P2P_E_BUDGET_EXCEEDED`：执行预算超限（steps/retries/time/llmCalls）。
+
+失败分级：
+
+- `rejected`：输入或校验不达标，可修复后继续。
+- `failed`：流程执行失败，需重新触发步骤。
+- `blocked`：外部前置条件未满足（如人工登录），等待后续继续。
 
 ---
 
@@ -169,7 +258,7 @@ plugins/
 
 `/p2p.generate` 至少生成：
 
-1. `plugin.json`
+1. `plugin.json`（**`kind` 恒为 `command_plugin`**）
 2. `src/runtime.ts`（或直接 `dist/runtime.mjs`）
 3. `README.md`
 4. `.p2p-meta.json` 更新（状态、revision、变更摘要）
@@ -177,10 +266,27 @@ plugins/
 ### 6.2 代码约束
 
 1. 入口必须 `export default class`。
-2. 运行时契约对齐 `PluginRuntimeExtension`。
-3. `executeTurn` 返回 `{ text, continue?, persist? }`。
+2. 运行时契约对齐 `@wclaw/plugin-sdk` 中与 **`command_plugin`** 一致的默认类能力（见 **`PluginRuntimeExtension`** 及 **`command_plugin` 开发检查清单**）。
+3. `executeTurn` 返回 `{ text, continue?, persist? }`（宿主对 `command_plugin` 的 Chat/命令编排仍经统一回合入口，与 SDK 约定一致）。
 4. 宿主注入能力按可选处理，不允许直接非空断言。
 5. 禁止生成宿主内部路径 import。
+
+---
+
+## 6.3 `prompt2plugin-studio` 权限矩阵（plugin.json 必填依据）
+
+`prompt2plugin-studio` 为开发插件，需最小可用权限集合（deny-by-default）：
+
+1. 文件系统读写（限定到 `plugins/.drafts/**` 与本插件目录）。
+2. 受控命令执行（用于构建/校验，需白名单命令集）。
+3. 宿主编排调用权限（触发校验、测试、晋升链路）。
+4. 可选：受控网络读（仅当生成阶段依赖外部模板源）。
+
+硬约束：
+
+- 禁止越权写入稳定目录（`plugins/<plugin-id>/`）之外的任意路径，除 `promote` 指令受门禁放行。
+- 禁止直接访问宿主内部实现目录。
+- 禁止直连 MCP；若需要 MCP，必须经宿主网关能力注入。
 
 ---
 
@@ -190,7 +296,8 @@ plugins/
 
 1. **清单检查**
   - `id/kind/entry/capabilities/configSchema/defaultConfig` 完整性
-  - `kind` 与功能声明一致性
+  - **`kind` 必须为 `command_plugin`**（与 `prompt2plugin-studio` 生成范围一致）
+  - `kind` 与 `capabilities` / `commandMode` 等功能声明一致性
 2. **契约检查**
   - 默认导出类检查
   - `executeTurn` 返回协议检查
@@ -219,6 +326,22 @@ plugins/
 
 ---
 
+## 7.1 校验与测试执行环境（隔离策略）
+
+`validate/test` 采用三层执行边界：
+
+1. 草稿源目录：`plugins/.drafts/<plugin-id>/`（真相源）。
+2. 校验临时目录：每次命令创建独立工作区（含超时自动清理）。
+3. 宿主沙箱加载：通过隔离 `import()` 做一次真实加载冒烟。
+
+建议实现：
+
+- `validate` 默认 `full`，`quick` 可跳过耗时测试但不得跳过 manifest/契约检查。
+- `test` 默认 `smoke`（成功 1 + 失败 1），`full` 执行扩展用例。
+- 任一步骤失败只更新草稿 meta 与报告，不写稳定目录。
+
+---
+
 ## 8. 测试流水线（必须执行）
 
 `/p2p.test` 最小测试集：
@@ -226,8 +349,8 @@ plugins/
 1. 正常输入：返回 `text`。
 2. 异常输入：返回可读错误提示。
 3. 可选能力缺失：`invokeHostLlm/invokeHostMcpTool` 未注入时不崩溃。
-4. `command_plugin` 额外检查：命令参数错误分支。
-5. `runtime_plugin` 额外检查：会话路径基础可用性（至少一轮）。
+4. `command_plugin` 检查：命令参数错误分支、最小 Chat/命令回合可用。
+5. v1 不覆盖 `runtime_extension` 目标插件；若未来扩展生成范围，再补充专用用例。
 
 ---
 
@@ -401,6 +524,19 @@ async function runTask(task: TaskInput, budget: Budget): Promise<TaskResult> {
 2. 拷贝草稿到 `plugins/<plugin-id>/`。
 3. 记录 promote 审计信息（时间、traceId、revision、操作者）。
 
+并发控制（必须）：
+
+1. 以 `plugin-id` 为粒度加互斥锁（单飞）。
+2. `promote` 请求可传 `expectedRevision`，与当前草稿 revision 不一致时拒绝。
+3. 锁等待超时后返回 `P2P_E_PROMOTE_LOCKED`，避免队列阻塞。
+
+revision 包内容定义（回滚依据）：
+
+1. `plugin.json`
+2. 入口与运行时代码（`src`/`dist` 中实际晋升文件）
+3. 当次 `validate/test` 报告摘要
+4. promote 审计元数据（操作者、时间、traceId）
+
 ### 9.2 rollback
 
 `/p2p.rollback <revision>`：
@@ -411,26 +547,48 @@ async function runTask(task: TaskInput, budget: Budget): Promise<TaskResult> {
 
 ---
 
+## 9.3 审计存储与保留策略
+
+最小记录要求：
+
+1. 每次 `/p2p.*` 命令写一条结构化审计记录。
+2. 关键字段：`time/traceId/pluginId/revision/command/status/errorCode/operator`。
+3. `promote/rollback` 必须额外记录“前后版本对照”。
+
+落盘建议：
+
+- 文件日志：`var/logs/prompt2plugin/<plugin-id>.jsonl`
+- 元数据：`plugins/.drafts/<plugin-id>/.p2p-meta.json` 仅保留最新态，不替代审计全量日志。
+
+保留建议（MVP）：
+
+- 审计日志保留 90 天；
+- 历史 revision 默认保留最近 20 个（其余归档）。
+
+---
+
 ## 10. 与现有文档对齐清单
 
 `Prompt2Plugin` 实施必须引用以下文档作为规则源：
 
 1. `packages/plugin-sdk/docs/插件开发文档.md`
 2. `packages/plugin-sdk/docs/插件开发检查清单.md`
-3. `packages/plugin-sdk/docs/command_plugin开发检查清单.md`
-4. `packages/plugin-sdk/docs/runtime_plugin开发检查清单.md`
+3. `packages/plugin-sdk/docs/command_plugin开发检查清单.md`（**v1 生成与自动校验的主清单**）
+4. `packages/plugin-sdk/docs/runtime_plugin开发检查清单.md`（**不用于** v1 由 studio 生成的目标插件；仅供人工维护 `runtime_extension` 时参考）
 5. `docs/项目功能/插件插件配置.md`
 6. `docs/Prompt2Plugin/Prompt2Plugin_通用提示词规范_v1.md`（提示词与执行收敛）
 
 要求：
 
-- 生成时自动提示关键规则。
+- 生成时自动提示关键规则（**以 `command_plugin` 为口径**）。
 - 校验结果按“清单条目”输出。
 - promote 时强制关键条目全绿。
 
 ---
 
 ## 11. 开发任务拆分（建议 5 天）
+
+> **可勾选执行清单**（含现状快照、P0–P3）：见 [Prompt2Plugin_开发TODO.md](./Prompt2Plugin_开发TODO.md)。
 
 ### Day 1：骨架与命令路由
 
@@ -458,9 +616,20 @@ async function runTask(task: TaskInput, budget: Budget): Promise<TaskResult> {
 
 ### Day 5：联调与文档
 
-1. 用两个样例插件跑完整链路（一个 `command_plugin`，一个 `runtime_plugin`）。
+1. 用**两个不同业务场景**的 `command_plugin` 草稿样例跑完整链路（v1 不包含 `runtime_extension` 生成联调）。
 2. 补齐异常分支与审计日志。
 3. 更新 README 与操作手册。
+
+---
+
+## 11.1 清理与配额策略（防目录膨胀）
+
+为避免草稿与工作区长期膨胀，增加最小治理：
+
+1. `.drafts/<plugin-id>`：超过 `maxDraftRevisions`（默认 20）后归档最旧版本。
+2. `var/plugin-workspaces/<plugin-id>`：按 `maxWorkspaceSizeMb`（默认 500MB）触发清理。
+3. 临时校验目录：命令结束即清理，异常退出由后台清扫任务兜底。
+4. `/p2p.status` 输出当前占用与最近清理时间，便于运维排查。
 
 ---
 
@@ -485,4 +654,7 @@ async function runTask(task: TaskInput, budget: Budget): Promise<TaskResult> {
   - 规避：所有校验规则从文档源自动映射，版本化管理。
 4. promote 冲突
   - 规避：promote 前做目标目录变更检测并要求确认。
+
+5. 命令族持续扩展导致范围失控
+  - 规避：明确分层：`v1` 只交付 `init/spec/generate/validate/test/promote/rollback/status`；`generate-prompts/run/repair/converge/generate-script` 进入 `v1.1`。
 

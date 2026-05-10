@@ -1,3 +1,4 @@
+import { mcpAllowedServersAllowsServerId } from "@wclaw/plugin-sdk";
 import { createMcpGatewayService } from "../mcp-gateway/mcp-gateway.service.js";
 import type { PluginManifest } from "../plugin-catalog/plugin-catalog.service.js";
 
@@ -62,7 +63,7 @@ export async function executeMcpExplicitCommand(
       output: "[mcp] 当前插件未配置 mcp.allowedServers，拒绝执行。"
     };
   }
-  if (!allowedServers.includes(parsed.serverAlias)) {
+  if (!mcpAllowedServersAllowsServerId(parsed.serverAlias, allowedServers)) {
     return {
       pluginId: manifest.id,
       command: commandText,

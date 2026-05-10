@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { getLlmConfig, saveLlmConfig, type LlmConfig } from "../../../lib/api/llm.api";
+import { getLlmProfile, saveLlmProfile, type LlmConfig } from "../../../lib/api/llm.api";
 
 const DEFAULT_CONFIG: LlmConfig = {
+  displayName: "默认配置",
   providerType: "custom",
   baseURL: "",
   apiKey: "",
@@ -12,7 +13,7 @@ const DEFAULT_CONFIG: LlmConfig = {
   enableStreaming: true
 };
 
-export function useLlmConfig() {
+export function useLlmConfig(scope: string) {
   const [config, setConfig] = useState<LlmConfig>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -25,8 +26,8 @@ export function useLlmConfig() {
       setLoading(true);
       setError(null);
       try {
-        const data = await getLlmConfig();
-        if (mounted) setConfig(data);
+        const row = await getLlmProfile(scope);
+        if (mounted) setConfig({ ...DEFAULT_CONFIG, ...row.config });
       } catch (err) {
         if (mounted) setError(err instanceof Error ? err.message : "加载失败");
       } finally {
@@ -37,7 +38,7 @@ export function useLlmConfig() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [scope]);
 
   function updateField<K extends keyof LlmConfig>(key: K, value: LlmConfig[K]) {
     setConfig((prev) => ({ ...prev, [key]: value }));
@@ -48,7 +49,7 @@ export function useLlmConfig() {
     setError(null);
     setNotice(null);
     try {
-      const saved = await saveLlmConfig(config);
+      const saved = await saveLlmProfile(scope, config);
       setConfig(saved);
       setNotice("LLM 配置已保存");
     } catch (err) {

@@ -1,3 +1,5 @@
+import { MCP_ALLOWED_SERVERS_WILDCARD } from "@wclaw/plugin-sdk";
+
 type ValidationResult = {
   valid: boolean;
   errors: string[];
@@ -94,7 +96,13 @@ function validateSemantics(spec: Record<string, unknown>): string[] {
 
   const aliasPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
   for (const alias of allowedServers) {
-    if (typeof alias !== "string" || !aliasPattern.test(alias)) {
+    if (typeof alias !== "string") {
+      errors.push(`mcp.allowedServers 非法别名: ${String(alias)}`);
+      continue;
+    }
+    const trimmed = alias.trim();
+    if (trimmed === MCP_ALLOWED_SERVERS_WILDCARD) continue;
+    if (!aliasPattern.test(trimmed)) {
       errors.push(`mcp.allowedServers 非法别名: ${String(alias)}`);
     }
   }

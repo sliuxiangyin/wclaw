@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 **/node_modules/
+# pnpm 本地缓存（勿提交）；若曾被误跟踪，运行：git rm -r --cached .pnpm-store
+.pnpm-store/
+**/.pnpm-store/
 
 # Build outputs
 dist/

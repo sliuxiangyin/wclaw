@@ -1,10 +1,10 @@
 # Prompt2Plugin 开发与进化目标
 
-更新时间：2026-05-09
+更新时间：2026-05-10
 
 本文原为《项目蓝图》中 Prompt2Plugin 专题条目的完整展开，现为 **`docs/Prompt2Plugin/`** 下的权威存档，与蓝图中的索引小节互为引用。
 
-同专题：[索引](./README.md)、[实施方案](./Prompt2Plugin_v1_实施方案.md)、[通用提示词规范](./Prompt2Plugin_通用提示词规范_v1.md)。
+同专题：[索引](./README.md)、[实施方案](./Prompt2Plugin_v1_实施方案.md)、[开发 TODO](./Prompt2Plugin_开发TODO.md)、[通用提示词规范](./Prompt2Plugin_通用提示词规范_v1.md)。
 
 ---
 
@@ -76,6 +76,7 @@
 
 - `Prompt2Plugin` 只负责“生成与治理”，不负责业务插件具体业务正确性兜底。
 - 宿主仍是唯一治理中心（加载、权限、策略、审计、灰度、回滚）。
+- **`prompt2plugin-studio` v1 仅生成目标类型 `command_plugin` 的草稿**；不生成 `runtime_extension`（`runtime_plugin`）类插件；后者须手写或未来另开生成能力。
 
 ### 2.2 组件形态
 
@@ -113,8 +114,8 @@ plugins/
 
 通过插件 chat 命令执行：
 
-1. `/p2p.init <plugin-id> --kind runtime_plugin|command_plugin`
-   - 创建草稿骨架与元信息。
+1. `/p2p.init <plugin-id> [--commandMode ephemeral_with_context|ephemeral_no_context|isolated_chat]`
+   - 创建草稿骨架与元信息。**生成目标** `plugin.json.kind` 恒为 `command_plugin`（由流水线保证，不在 init 行切换）。选填 `--commandMode` 写入**目标草稿** `plugin.json` 的 `commandMode`；省略时按模板默认。
 2. `/p2p.spec "<需求描述>"`
    - 生成或更新需求规格（写入 `.p2p-meta.json`）。
 3. `/p2p.generate`
@@ -127,6 +128,12 @@ plugins/
    - 校验全部通过后，将草稿发布到稳定目录。
 7. `/p2p.rollback <revision>`
    - 把稳定目录回退到某个已记录版本。
+
+补充口径（避免与实施稿漂移）：
+
+- `/p2p.*` 统一返回结构化结果：`ok/traceId/pluginId/revision/status/nextAction/error`。
+- `v1` 命令范围固定为：`init/spec/generate/validate/test/promote/rollback/status`。
+- `generate-prompts/run/repair/converge/generate-script` 归入 `v1.1`，不影响 v1 交付闭环。
 
 ### 2.5 状态机（草稿生命周期）
 
@@ -151,8 +158,8 @@ plugins/
 
 `/p2p.validate` 至少执行：
 
-1. `plugin.json` 结构与字段语义校验（`id/kind/entry/capabilities/configSchema/defaultConfig`）。
-2. 运行时契约校验（入口 `export default class`，`executeTurn` 返回形状）。
+1. `plugin.json` 结构与字段语义校验（`id/kind/entry/capabilities/configSchema/defaultConfig`），**且 `kind` 为 `command_plugin`**。
+2. 运行时契约校验（入口 `export default class`，`executeTurn` 返回形状；与 **`command_plugin` 检查清单** 对齐）。
 3. 构建校验（可编译为 ESM 产物）。
 4. 加载校验（宿主隔离加载一次）。
 5. 架构规则校验（如命中扫描范围则执行 `pnpm lint:arch`）。
@@ -163,20 +170,33 @@ plugins/
 2. 异常输入回合（有可读错误提示）。
 3. 可选能力缺失分支（LLM/MCP 未注入场景不崩溃）。
 
+补充口径（开工必备）：
+
+- `validate/test` 必须在隔离执行边界运行（草稿源目录 + 临时校验目录 + 沙箱加载）。
+- 校验失败写草稿元数据与报告，不得写稳定目录。
+- `promote` 必须具备并发门禁（`plugin-id` 粒度锁 + `expectedRevision` 防覆盖）。
+
 ### 2.7 与现有文档对齐
 
 `Prompt2Plugin` 必须引用并内置当前文档规范：
 
 - `packages/plugin-sdk/docs/插件开发文档.md`
 - `packages/plugin-sdk/docs/插件开发检查清单.md`
-- `packages/plugin-sdk/docs/command_plugin开发检查清单.md`
-- `packages/plugin-sdk/docs/runtime_plugin开发检查清单.md`
+- `packages/plugin-sdk/docs/command_plugin开发检查清单.md`（**v1 生成与机校主路径**）
+- `packages/plugin-sdk/docs/runtime_plugin开发检查清单.md`（**不纳入** studio 对目标插件的 v1 自动生成；仅人工编写 runtime 时参考）
 
 要求：
 
-1. 生成时自动注入“必做项”注释或 TODO。
+1. 生成时自动注入“必做项”注释或 TODO（**按 `command_plugin` 口径**）。
 2. 校验结果按清单条目输出通过/失败。
 3. `promote` 前必须“关键项全绿”。
+
+附加治理要求（与实施方案一致）：
+
+1. 需要 `prompt2plugin-studio` 权限矩阵（最小权限 + 越权边界）。
+2. 需要统一错误码（`P2P_E_*`）与失败分级（`rejected/failed/blocked`）。
+3. 需要全链路审计记录与保留策略（命令审计、promote/rollback 前后版本对照）。
+4. 需要草稿/工作区清理与配额策略，防止长期膨胀。
 
 ### 2.8 v1 验收标准（DoD）
 
@@ -185,3 +205,13 @@ plugins/
 3. 未通过校验的草稿无法 promote。
 4. promote 后稳定目录插件可被宿主发现并正常执行一轮。
 5. 整个过程可追踪（traceId、pluginId、draft revision、校验记录）。
+
+实施细节索引：
+
+- 命令输入/输出契约：见 `Prompt2Plugin_v1_实施方案.md` §4.1
+- 错误码与失败分级：见 `Prompt2Plugin_v1_实施方案.md` §4.2
+- 权限矩阵：见 `Prompt2Plugin_v1_实施方案.md` §6.3
+- 隔离执行策略：见 `Prompt2Plugin_v1_实施方案.md` §7.1
+- promote 并发与回滚包定义：见 `Prompt2Plugin_v1_实施方案.md` §9
+- 审计与保留策略：见 `Prompt2Plugin_v1_实施方案.md` §9.3
+- 清理与配额策略：见 `Prompt2Plugin_v1_实施方案.md` §11.1

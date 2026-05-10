@@ -7,7 +7,7 @@ import type {
   PluginTurnContext,
   PluginTurnHandleResult
 } from "@wclaw/plugin-sdk";
-import { BasePluginRuntime, PluginBridgeError, toSessionRow, toTurnResult } from "@wclaw/plugin-sdk";
+import { BasePluginRuntime, PluginBridgeError, toSessionRow, toTurnResult, TurnContextEmitter } from "@wclaw/plugin-sdk";
 type Topic = {
   id: number;
   title: string;
@@ -76,8 +76,10 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
     this.pluginRoot = path.dirname(fileURLToPath(import.meta.url));
   }
   async executeTurn(ctx: PluginTurnContext): Promise<PluginTurnHandleResult> {
+
+    const context= new TurnContextEmitter(ctx, this.pluginId)
     const fetchTopicsTool = "fetch_topics";
-    this.emitToolRunning(ctx, fetchTopicsTool, {
+    context.emitToolRunning( fetchTopicsTool, {
       content: [this.buildToolOutContent("开始抓取 hot 与 c/news/34 主题列表")]
     });
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -92,66 +94,62 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
     //   this.buildToolOutput("抓取完成", { count: 2 })
     // );
     // 出错
-    this.emitToolError(ctx, "fetch_topics", "抓取失败",{}, {
-      content: [this.buildToolOutContent("抓取失败")]
-    });
+    context.emitToolError( "fetch_topics", "抓取失败");
     return toTurnResult("处理完成");
 
-    this.emitAssistantDelta(ctx, "开始执行 linux-do-fetch 流程。\n\n");
-    try {
-      const hotTopics = await this.getTopics(ctx, "hot");
-      const newsTopics = await this.getTopics(ctx, "c/news/34");
-      const allTopics = [...hotTopics, ...newsTopics];
-      this.emitToolAvailable(
-        ctx,
-        fetchTopicsTool,
-        { phase: "fetch", channels: ["hot", "c/news/34"] },
-        this.buildToolOutput(`主题列表抓取完成，共 ${allTopics.length} 条`, {
-          count: allTopics.length
-        })
-      );
-      this.emitAssistantDelta(ctx, `获取到 ${allTopics.length} 个主题\n\n`);
-      const rankedTopics = await this.orderTopics(allTopics);
-      this.emitAssistantDelta(ctx, `排序后 ${rankedTopics.length} 个主题\n\n`);
-      if (allTopics.length === 0) {
-        const errorSummary =
-          "列表为空：未得到含 topic_list 的 JSON（多为 CF 挑战页、网络或 MCP 异常）。请开 debugListFetch 看正文片段；WSL 建议有头 Playwright：DISPLAY=:0，MCP 勿加 --headless。";
-        this.emitAssistantDelta(ctx, `${errorSummary}\n\n`);
-        return toTurnResult(
-          "[linux-do-fetch] 未获取到列表。请开启插件 debugListFetch 并检查 Playwright MCP / 网络 / WAF。"
-        );
-      }
-      if (rankedTopics.length === 0) {
-        const errorSummary = `共拉取 ${allTopics.length} 条，排序后均被过滤（置顶/公告/非 regular）。可换一个分类或减少过滤。`;
-        this.emitAssistantDelta(ctx, `${errorSummary}\n\n`);
-        return toTurnResult("[linux-do-fetch] 排序后无可用主题。");
-      }
-      const llmPickedTopics = await this.pickTopicsByLlm(rankedTopics);
-      this.emitAssistantDelta(ctx, `LLM 选出 ${llmPickedTopics.length} 个主题\n\n`);
+    // this.emitAssistantDelta(ctx, "开始执行 linux-do-fetch 流程。\n\n");
+    // try {
+    //   const hotTopics = await this.getTopics(ctx, "hot");
+    //   const newsTopics = await this.getTopics(ctx, "c/news/34");
+    //   const allTopics = [...hotTopics, ...newsTopics];
+    //   this.emitToolAvailable(
+    //     ctx,
+    //     fetchTopicsTool,
+    //     { phase: "fetch", channels: ["hot", "c/news/34"] },
+    //     this.buildToolOutput(`主题列表抓取完成，共 ${allTopics.length} 条`, {
+    //       count: allTopics.length
+    //     })
+    //   );
+    //   this.emitAssistantDelta(ctx, `获取到 ${allTopics.length} 个主题\n\n`);
+    //   const rankedTopics = await this.orderTopics(allTopics);
+    //   this.emitAssistantDelta(ctx, `排序后 ${rankedTopics.length} 个主题\n\n`);
+    //   if (allTopics.length === 0) {
+    //     const errorSummary =
+    //       "列表为空：未得到含 topic_list 的 JSON（多为 CF 挑战页、网络或 MCP 异常）。请开 debugListFetch 看正文片段；WSL 建议有头 Playwright：DISPLAY=:0，MCP 勿加 --headless。";
+    //     this.emitAssistantDelta(ctx, `${errorSummary}\n\n`);
+    //     return toTurnResult(
+    //       "[linux-do-fetch] 未获取到列表。请开启插件 debugListFetch 并检查 Playwright MCP / 网络 / WAF。"
+    //     );
+    //   }
+    //   if (rankedTopics.length === 0) {
+    //     const errorSummary = `共拉取 ${allTopics.length} 条，排序后均被过滤（置顶/公告/非 regular）。可换一个分类或减少过滤。`;
+    //     this.emitAssistantDelta(ctx, `${errorSummary}\n\n`);
+    //     return toTurnResult("[linux-do-fetch] 排序后无可用主题。");
+    //   }
+    //   const llmPickedTopics = await this.pickTopicsByLlm(rankedTopics);
+    //   this.emitAssistantDelta(ctx, `LLM 选出 ${llmPickedTopics.length} 个主题\n\n`);
 
-      const ganalysisResult = await this.ganalysisTopic(ctx, llmPickedTopics);
-      if (ganalysisResult) {
-        this.emitAssistantDelta(ctx, `执行成功: ${ganalysisResult.relativePath}\n\n`);
-        return toTurnResult(JSON.stringify(ganalysisResult, null, 2), { continue: true });
-      }
-      const errorSummary = "执行失败: 没有找到适合分析的主题";
-      this.emitAssistantDelta(ctx, `${errorSummary}\n\n`);
-      return toTurnResult(`[linux-do-fetch] 执行失败: 没有找到适合分析的主题`);
-    } catch (error) {
-      const msg =
-        error instanceof PluginBridgeError
-          ? `[${error.bridge}] ${error.code}: ${error.message}`
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      this.emitToolError(ctx, fetchTopicsTool, msg, {
-        content: [this.buildToolOutContent("主题列表抓取失败")]
-      });
-      this.emitAssistantDelta(ctx, `执行失败: ${msg}\n`);
-      return toTurnResult(`[linux-do-fetch] 执行失败: ${msg}`);
-    } finally {
-      await this.mcp.destroy(ctx, "playwright").catch(() => undefined);
-    }
+    //   const ganalysisResult = await this.ganalysisTopic(ctx, llmPickedTopics);
+    //   if (ganalysisResult) {
+    //     this.emitAssistantDelta(ctx, `执行成功: ${ganalysisResult.relativePath}\n\n`);
+    //     return toTurnResult(JSON.stringify(ganalysisResult, null, 2), { continue: true });
+    //   }
+    //   const errorSummary = "执行失败: 没有找到适合分析的主题";
+    //   this.emitAssistantDelta(ctx, `${errorSummary}\n\n`);
+    //   return toTurnResult(`[linux-do-fetch] 执行失败: 没有找到适合分析的主题`);
+    // } catch (error) {
+    //   const msg =
+    //     error instanceof PluginBridgeError
+    //       ? `[${error.bridge}] ${error.code}: ${error.message}`
+    //       : error instanceof Error
+    //         ? error.message
+    //         : String(error);
+    //   this.emitToolError(ctx, fetchTopicsTool, msg);
+    //   this.emitAssistantDelta(ctx, `执行失败: ${msg}\n`);
+    //   return toTurnResult(`[linux-do-fetch] 执行失败: ${msg}`);
+    // } finally {
+    //   await this.mcp.destroy(ctx, "playwright").catch(() => undefined);
+    // }
   }
 
   
@@ -213,7 +211,7 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
       const extracted = this.extractTopicDetail(topic, detailJson);
       if (!extracted) continue;
       const judgment = await this.judgeTopicPublishSuitability(extracted);
-      this.emitAssistantDelta(ctx, `判断主题是否适合发布: ${judgment.suitable}\n`);
+      // this.emitAssistantDelta(ctx, `判断主题是否适合发布: ${judgment.suitable}\n`);
       if (!judgment.suitable) continue;
       const md = await this.buildWeixinStyleMarkdown(extracted);
       const slugSafe = this.slugSafeForFilename(extracted.slug);
@@ -535,10 +533,10 @@ export default class LinuxDoFetchRuntime extends BasePluginRuntime {
     const topics = listing?.topic_list?.topics || [];
 
     if (debugFetch && ((!data && textBlock) || topics.length === 0)) {
-      this.emitAssistantDelta(
-        ctx,
-        `[${cate}] 解析 topic_list=${topics.length}，正文前几字: ${this.oneLineSnippet(textBlock || "(empty)", 400)}\n`
-      );
+      // this.emitAssistantDelta(
+      //   ctx,
+      //   `[${cate}] 解析 topic_list=${topics.length}，正文前几字: ${this.oneLineSnippet(textBlock || "(empty)", 400)}\n`
+      // );
     }
 
     if (!data) {
